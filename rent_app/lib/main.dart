@@ -1,52 +1,35 @@
 import 'package:flutter/material.dart';
 
 void main() {
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '租屋查詢系統',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: RentHomePage(),
+      title: '租屋整合系統',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const RentHomePage(),
     );
   }
 }
 
 class RentHomePage extends StatefulWidget {
+  const RentHomePage({super.key});
+
   @override
-  _RentHomePageState createState() => _RentHomePageState();
+  State<RentHomePage> createState() => _RentHomePageState();
 }
 
 class _RentHomePageState extends State<RentHomePage> {
-
   List<Map<String, dynamic>> rentList = [
-    {
-      "title": "逢甲大學套房",
-      "price": "6500",
-      "location": "西屯區",
-      "image":
-          "https://picsum.photos/300/200"
-    },
-    {
-      "title": "近夜市雅房",
-      "price": "5000",
-      "location": "逢甲路",
-      "image":
-          "https://picsum.photos/301/200"
-    },
-    {
-      "title": "電梯大樓獨立套房",
-      "price": "8500",
-      "location": "河南路",
-      "image":
-          "https://picsum.photos/302/200"
-    },
+    {"title": "逢甲大學套房", "price": "6500", "location": "西屯區"},
+    {"title": "近夜市雅房", "price": "5000", "location": "逢甲路"},
+    {"title": "電梯大樓獨立套房", "price": "8500", "location": "河南路"},
   ];
 
   void refreshData() {
@@ -58,65 +41,64 @@ class _RentHomePageState extends State<RentHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("租屋整合系統"),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text("租屋整合系統"), centerTitle: true),
 
       body: ListView.builder(
         itemCount: rentList.length,
-        itemBuilder: (context, index) {
 
+        itemBuilder: (context, index) {
           final rent = rentList[index];
 
           return Card(
-            margin: EdgeInsets.all(10),
+            margin: const EdgeInsets.all(10),
             elevation: 5,
 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
 
-                Image.network(
-                  rent["image"],
+              children: [
+                // 假圖片區塊
+                Container(
                   height: 200,
                   width: double.infinity,
-                  fit: BoxFit.cover,
+                  color: Colors.grey[300],
+
+                  child: const Center(
+                    child: Icon(Icons.home, size: 80, color: Colors.grey),
+                  ),
                 ),
 
                 Padding(
                   padding: const EdgeInsets.all(10),
+
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
 
+                    children: [
                       Text(
                         rent["title"],
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
 
-                      SizedBox(height: 10),
+                      const SizedBox(height: 10),
 
                       Text(
                         "地點：${rent["location"]}",
-                        style: TextStyle(fontSize: 16),
+                        style: const TextStyle(fontSize: 16),
                       ),
 
-                      SizedBox(height: 5),
+                      const SizedBox(height: 5),
 
                       Text(
                         "租金：\$${rent["price"]} / 月",
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: Colors.red,
-                        ),
+                        style: const TextStyle(fontSize: 18, color: Colors.red),
                       ),
                     ],
                   ),
-                )
+                ),
               ],
             ),
           );
@@ -125,7 +107,7 @@ class _RentHomePageState extends State<RentHomePage> {
 
       floatingActionButton: FloatingActionButton(
         onPressed: refreshData,
-        child: Icon(Icons.refresh),
+        child: const Icon(Icons.refresh),
       ),
     );
   }
