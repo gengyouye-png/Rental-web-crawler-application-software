@@ -10,9 +10,3 @@ response = requests.get(url, headers=headers)
 
 print(response.status_code)
 
-if response.status_code == 200:
-    with open("output.html", "w", encoding="utf-8") as f:
-        f.write(response.text)
-    print("寫入成功")
-else:
-    print("沒有抓取到網頁")
