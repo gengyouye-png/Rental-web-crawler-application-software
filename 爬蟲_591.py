@@ -1,61 +1,174 @@
-import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 import pandas as pd
+import time
+import re
 
-keyword = input("請輸入搜尋關鍵字：")
+# 網址
+list_url = "https://rent.591.com.tw/list?region=8&school=1481&kind=2&price=5000_10000&other=rental-subsidy"
 
-url = "https://rent.591.com.tw/list?region=8"
+# 瀏覽器
+options = Options()
+options.add_argument("--start-maximized")
 
-house_list = []
+driver = webdriver.Chrome(options=options)
 
-# 先抓第 1 頁，確認總共有幾頁
-params = {
-    "category": "house",
-    "keywords": keyword,
-    "order": "recommend",
-    "sort": "desc",
-    "page": 1
-}
+# 進列表頁
+driver.get(list_url)
 
-response = requests.get(url, params=params)
-data = response.json()
+time.sleep(10)
 
-last_page = data["data"]["search"]["last_page"]
+# 滑動
+for _ in range(10):
+    driver.execute_script("window.scrollBy(0, 800);")
+    time.sleep(1)
 
-print("總頁數：", last_page)
+# 抓連結
+links = driver.find_elements(By.CSS_SELECTOR, "a[href]")
 
-max_page = min(last_page, 20)
+house_links = []
 
-# 從第 1 頁抓到最後一頁
-for page in range(1, max_page + 1):
-    print("正在抓第", page, "頁")
+for a in links:
+    href = a.get_attribute("href")
 
-    params = {
-        "category": "house",
-        "keywords": keyword,
-        "order": "recommend",
-        "sort": "desc",
-        "page": page
-    }
+    if not href:
+        continue
 
-    response = requests.get(url, params=params)
-    data = response.json()
+    if "rent.591.com.tw/" in href:
 
-    items = data["data"]["search"]["items"]
+        house_id = href.rstrip("/").split("/")[-1]
 
-    for item in items:
-        house_data = {
-            "標題": item["title"],
-            "租金": item["rent"],
-            "地址": item["address"],
-            "樓層": item["floor"],
-            "坪數": item["ping"],
-            "房型": item["type_space_name"]
-        }
+        if house_id.isdigit():
+            house_links.append(href)
 
-        house_list.append(house_data)
+# 去重複
+house_links = list(set(house_links))
 
-df = pd.DataFrame(house_list)
+print("房源：", len(house_links))
 
-df.to_excel(r"C:\Users\HuanYu\Desktop\租屋資料.xlsx", index=False)
+# 抓詳細頁
+rows = []
 
-print("完成，共抓到", len(house_list), "筆資料")
+for index, link in enumerate(house_links):
+
+    print(f"{index + 1}/{len(house_links)}")
+
+    driver.get(link)
+
+    time.sleep(5)
+    # 滑動
+    for _ in range(5):
+        driver.execute_script("window.scrollBy(0, 600);")
+        time.sleep(1)
+
+    page_text = driver.find_element(By.TAG_NAME, "body").text
+
+    lines = page_text.split("\n")
+
+    title = ""
+    price = ""
+    addr = ""
+    layout = ""
+    area = ""
+    floor = ""
+    pet = ""
+    manage_fee = ""
+    poster = ""
+
+    # 清理
+    bad_words = [
+        "首頁",
+        "新建案",
+        "中古屋",
+        "租屋",
+        "車位",
+        "刊登",
+        "登入"
+    ]
+
+    clean_lines = []
+
+    for line in lines:
+        line = line.strip()
+
+        if line and line not in bad_words:
+            clean_lines.append(line)
+
+    # 標題
+    for line in clean_lines:
+
+        if (
+            "元/月" not in line
+            and "押金" not in line
+            and len(line) > 5
+        ):
+            title = line
+            break
+
+    # 租金
+    price_match = re.search(
+        r'[\d,]+\s*元/月|月租\s*[\d,]+|租金\s*[\d,]+',
+        page_text
+    )
+
+    if price_match:
+        price = price_match.group().replace(" ", "")
+
+    # 其他
+    for line in clean_lines:
+
+        if (
+            ("高雄" in line or "路" in line or "街" in line or "巷" in line)
+            and addr == ""
+        ):
+            addr = line
+
+        if "房" in line and "廳" in line and layout == "":
+            layout = line
+
+        if "坪" in line and area == "":
+            area = line
+
+        if "樓" in line and floor == "":
+            floor = line
+
+        if "寵物" in line and pet == "":
+            pet = line
+
+        if "管理費" in line and manage_fee == "":
+            manage_fee = line
+
+        if (
+            ("屋主" in line or "仲介" in line or "代理人" in line)
+            and poster == ""
+        ):
+            poster = line
+
+    rows.append({
+        "mark": "",
+        "title": title,
+        "price": price,
+        "price_adjusted": price,
+        "link": link,
+        "addr": addr,
+        "explain": " | ".join(clean_lines[:30]),
+        "社區": "",
+        "車位": "",
+        "管理費": manage_fee,
+        "poster": poster,
+        "寵物": pet,
+        "格局": layout,
+        "坪數": area,
+        "樓層": floor
+    })
+
+# 關閉
+driver.quit()
+
+# 輸出
+df = pd.DataFrame(rows)
+
+df.to_excel("591租屋詳細資料.xlsx", index=False)
+
+print("完成")
