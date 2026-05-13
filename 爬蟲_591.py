@@ -6,7 +6,7 @@ import time
 import re
 
 # 網址
-list_url = "https://rent.591.com.tw/list?region=8&school=1481&kind=2&price=5000_10000&other=rental-subsidy"
+list_url = "https://www.sinyi.com.tw/rent/list/Taichung-city/407-zip/rent1-use/rentAid-source/index.html"
 
 # 瀏覽器
 options = Options()
@@ -35,7 +35,7 @@ for a in links:
     if not href:
         continue
 
-    if "rent.591.com.tw/" in href:
+    if "https://www.sinyi.com.tw/rent/list/Taichung-city/407-zip/rent1-use/rentAid-source/index.html" in href:
 
         house_id = href.rstrip("/").split("/")[-1]
 
