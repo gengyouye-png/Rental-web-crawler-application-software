@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import time
+import sqlite3
 from urllib.parse import urljoin
 
 BASE = "https://rent.591.com.tw"
@@ -29,7 +30,6 @@ AREA_MAP = {
         "東區": 103,
         "中區": 99,
     },
-
     "高雄": {
         "三民區": 291,
         "左營區": 295,
@@ -57,14 +57,12 @@ session.headers.update(headers)
 
 
 def ask_user():
-
     print("=== 591 租屋爬蟲 ===")
 
     print("\n可選縣市：")
     print("、".join(CITY_MAP.keys()))
 
     city = input("\n請輸入縣市：").strip()
-
     region = CITY_MAP.get(city)
 
     if not region:
@@ -76,7 +74,6 @@ def ask_user():
     print("、".join(AREA_MAP.get(city, {}).keys()))
 
     area_name = input("\n請輸入地區，直接 Enter 不限制：").strip()
-
     area_id = ""
 
     if area_name:
@@ -86,7 +83,6 @@ def ask_user():
     print("、".join(KIND_MAP.keys()))
 
     kind_text = input("\n請輸入房型，直接 Enter 預設獨立套房：").strip()
-
     kind = KIND_MAP.get(kind_text, 2)
 
     min_price = input("\n最低租金，直接 Enter 預設 5000：").strip()
@@ -109,7 +105,6 @@ def ask_user():
 
 
 def build_list_url(params, page=1):
-
     query = {
         "region": params["region"],
         "kind": params["kind"],
@@ -123,7 +118,6 @@ def build_list_url(params, page=1):
         query["other"] = "rental-subsidy"
 
     url = BASE + "/list?"
-
     url += "&".join([f"{k}={v}" for k, v in query.items()])
 
     if page > 1:
@@ -133,12 +127,10 @@ def build_list_url(params, page=1):
 
 
 def get_house_links(list_url):
-
     print("\n列表頁：")
     print(list_url)
 
     res = session.get(list_url, timeout=15)
-
     res.encoding = "utf-8"
 
     soup = BeautifulSoup(res.text, "html.parser")
@@ -146,33 +138,25 @@ def get_house_links(list_url):
     links = []
 
     for a in soup.select("a[href]"):
-
         href = a.get("href")
 
         if not href:
             continue
 
         full_url = urljoin(BASE, href)
-
         house_id = full_url.rstrip("/").split("/")[-1]
 
-        if (
-            "rent.591.com.tw" in full_url
-            and house_id.isdigit()
-        ):
+        if "rent.591.com.tw" in full_url and house_id.isdigit():
             links.append(full_url)
 
     return list(set(links))
 
 
 def parse_detail(link, city, area_name):
-
     res = session.get(link, timeout=15)
-
     res.encoding = "utf-8"
 
     soup = BeautifulSoup(res.text, "html.parser")
-
     text = soup.get_text("\n", strip=True)
 
     lines = [
@@ -189,74 +173,34 @@ def parse_detail(link, city, area_name):
     area = ""
     room_type = ""
 
-    # 標題
     for line in lines:
-
-        if (
-            len(line) > 5
-            and "元/月" not in line
-            and "押金" not in line
-        ):
+        if len(line) > 5 and "元/月" not in line and "押金" not in line:
             title = line
             break
 
-    # 租金
-    price_match = re.search(
-        r'[\d,]+\s*元/月',
-        text
-    )
-
+    price_match = re.search(r'[\d,]+\s*元/月', text)
     if price_match:
         price = price_match.group().replace(" ", "")
 
-    # 押金
     deposit_match = re.search(
         r'押金\s*[二一]?個月|押金面議|押金[\d,]+元',
         text
     )
-
     if deposit_match:
         deposit = deposit_match.group().replace(" ", "")
 
-    # 其他資訊
     for line in lines:
-
-        # 地址
-        if (
-            addr == ""
-            and (
-                "路" in line
-                or "街" in line
-                or "巷" in line
-                or "區" in line
-            )
-        ):
+        if addr == "" and ("路" in line or "街" in line or "巷" in line or "區" in line):
             addr = line
 
-        # 樓層
-        if (
-            floor == ""
-            and "樓" in line
-        ):
+        if floor == "" and "樓" in line:
             floor = line
 
-        # 坪數
-        if (
-            area == ""
-            and "坪" in line
-        ):
+        if area == "" and "坪" in line:
             area = line
 
-        # 房型
-        if (
-            room_type == ""
-            and (
-                "房" in line
-                or "廳" in line
-                or "衛" in line
-                or "套房" in line
-                or "雅房" in line
-            )
+        if room_type == "" and (
+            "房" in line or "廳" in line or "衛" in line or "套房" in line or "雅房" in line
         ):
             room_type = line
 
@@ -274,16 +218,55 @@ def parse_detail(link, city, area_name):
     }
 
 
-def main():
+def save_to_sqlite(rows):
+    conn = sqlite3.connect("rent.db")
+    cursor = conn.cursor()
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS houses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        縣市 TEXT,
+        地區 TEXT,
+        標題 TEXT,
+        租金 TEXT,
+        押金 TEXT,
+        地址 TEXT,
+        樓層 TEXT,
+        坪數 TEXT,
+        房型 TEXT,
+        連結 TEXT UNIQUE
+    )
+    """)
+
+    for row in rows:
+        cursor.execute("""
+        INSERT OR IGNORE INTO houses
+        (縣市, 地區, 標題, 租金, 押金, 地址, 樓層, 坪數, 房型, 連結)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            row["縣市"],
+            row["地區"],
+            row["標題"],
+            row["租金"],
+            row["押金"],
+            row["地址"],
+            row["樓層"],
+            row["坪數"],
+            row["房型"],
+            row["連結"]
+        ))
+
+    conn.commit()
+    conn.close()
+
+
+def main():
     params = ask_user()
 
     all_links = []
 
     for page in range(1, 6):
-
         list_url = build_list_url(params, page)
-
         links = get_house_links(list_url)
 
         print(f"\n第 {page} 頁找到 {len(links)} 筆")
@@ -292,31 +275,25 @@ def main():
             break
 
         all_links.extend(links)
-
         time.sleep(1)
 
     all_links = list(set(all_links))
-
     print(f"\n總連結數：{len(all_links)}")
 
     rows = []
 
     for i, link in enumerate(all_links):
-
         print(f"正在抓第 {i + 1}/{len(all_links)} 筆")
 
         try:
-
             data = parse_detail(
                 link,
                 params["city"],
                 params["area_name"]
             )
-
             rows.append(data)
 
         except Exception as e:
-
             print("失敗：", link)
             print(e)
 
@@ -324,13 +301,13 @@ def main():
 
     df = pd.DataFrame(rows)
 
-    df.to_excel(
-        "591租屋.xlsx",
-        index=False
-    )
+    save_to_sqlite(rows)
+
+    df.to_excel("591租屋.xlsx", index=False)
 
     print("\n完成")
     print("已輸出：591租屋.xlsx")
+    print("已寫入：rent.db")
 
 
 if __name__ == "__main__":
