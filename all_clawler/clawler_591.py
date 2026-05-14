@@ -3,13 +3,58 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import time
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 
-BASE = "https://rent.yungching.com.tw"
+BASE = "https://rent.591.com.tw"
+
+CITY_MAP = {
+    "台北": 1,
+    "新北": 3,
+    "桃園": 6,
+    "台中": 8,
+    "台南": 15,
+    "高雄": 17,
+    "彰化": 10,
+    "嘉義": 12,
+}
+
+AREA_MAP = {
+    "台中": {
+        "西屯區": 104,
+        "北屯區": 105,
+        "南屯區": 106,
+        "北區": 100,
+        "西區": 101,
+        "南區": 102,
+        "東區": 103,
+        "中區": 99,
+    },
+
+    "高雄": {
+        "三民區": 291,
+        "左營區": 295,
+        "鼓山區": 294,
+        "苓雅區": 290,
+        "前鎮區": 292,
+        "鳳山區": 300,
+    },
+
+    "台北": {
+        "大安區": 5,
+        "文山區": 12,
+    }
+}
+
+KIND_MAP = {
+    "整層住家": 1,
+    "獨立套房": 2,
+    "分租套房": 3,
+    "雅房": 4,
+}
 
 headers = {
     "User-Agent": "Mozilla/5.0",
-    "Referer": BASE,
+    "Referer": "https://rent.591.com.tw/",
 }
 
 session = requests.Session()
@@ -17,38 +62,90 @@ session.headers.update(headers)
 
 
 def ask_user():
-    print("=== 永慶租屋 requests 爬蟲 ===")
 
-    city = input("請輸入縣市，例如 台北市、台中市：").strip()
-    area = input("請輸入地區，例如 大安區、西屯區，直接 Enter 不限制：").strip()
-    pages = input("要抓幾頁？直接 Enter 預設 3 頁：").strip()
+    print("=== 591 租屋爬蟲 ===")
 
-    if not city:
-        city = "台北市"
+    print("\n可選縣市：")
+    print("、".join(CITY_MAP.keys()))
 
-    max_pages = int(pages) if pages.isdigit() else 3
+    city = input("\n請輸入縣市：").strip()
 
-    return city, area, max_pages
+    region = CITY_MAP.get(city)
+
+    if not region:
+        print("找不到縣市，預設台中")
+        city = "台中"
+        region = 8
+
+    print("\n可選地區：")
+    print("、".join(AREA_MAP.get(city, {}).keys()))
+
+    area_name = input("\n請輸入地區：").strip()
+
+    area_id = AREA_MAP.get(city, {}).get(area_name, "")
+
+    print("\n可選房型：")
+    print("、".join(KIND_MAP.keys()))
+
+    kind_text = input("\n請輸入房型：").strip()
+
+    if not kind_text:
+        kind_text = "獨立套房"
+
+    kind = KIND_MAP.get(kind_text, 2)
+
+    min_price = input("\n最低租金：").strip() or "5000"
+    max_price = input("最高租金：").strip() or "10000"
+
+    subsidy = input("\n是否要租補？ y/n：").strip().lower()
+
+    max_pages_text = input("\n要抓幾頁？").strip()
+
+    max_pages = int(max_pages_text) if max_pages_text.isdigit() else 5
+
+    return {
+        "city": city,
+        "area_name": area_name,
+        "region": region,
+        "area_id": area_id,
+        "kind": kind,
+        "price": f"{min_price}_{max_price}",
+        "subsidy": subsidy == "y",
+        "max_pages": max_pages
+    }
 
 
-def build_list_url(city, area="", page=1):
-    if area:
-        path = f"{city}-{area}_c"
-    else:
-        path = f"{city}-_c"
+def build_list_url(params, page=1):
 
-    url = f"{BASE}/list/{quote(path)}"
+    query = {
+        "region": params["region"],
+        "kind": params["kind"],
+        "price": params["price"],
+    }
+
+    if params["area_id"]:
+        query["section"] = params["area_id"]
+
+    if params["subsidy"]:
+        query["other"] = "rental-subsidy"
+
+    url = BASE + "/list?"
+
+    url += "&".join([f"{k}={v}" for k, v in query.items()])
 
     if page > 1:
-        url += f"?pg={page}"
+        url += f"&page={page}"
 
     return url
 
 
 def get_house_links(list_url):
-    print("列表頁：", list_url)
+
+    print("\n列表頁：")
+    print(list_url)
 
     res = session.get(list_url, timeout=15)
+
     res.encoding = "utf-8"
 
     soup = BeautifulSoup(res.text, "html.parser")
@@ -56,96 +153,205 @@ def get_house_links(list_url):
     links = []
 
     for a in soup.select("a[href]"):
+
         href = a.get("href")
+
         if not href:
             continue
 
         full_url = urljoin(BASE, href)
 
-        # 永慶物件網址常含 list 後面的物件編號或 shop 類型
-        if "rent.yungching.com.tw" in full_url:
-            text = a.get_text(strip=True)
+        house_id = full_url.rstrip("/").split("/")[-1]
 
-            if (
-                re.search(r'\d+(?:\.\d+)?坪', text)
-                or re.search(r'\d+\s*/\s*\d+\s*樓', text)
-                or "整層住家" in text
-                or "獨立套房" in text
-                or "分租套房" in text
-                or "雅房" in text
-            ):
-                if full_url not in links:
-                    links.append(full_url)
+        if (
+            "rent.591.com.tw" in full_url
+            and house_id.isdigit()
+        ):
+            links.append(full_url)
 
-    return links
+    return list(set(links))
 
 
-def parse_list_items(list_url):
-    res = session.get(list_url, timeout=15)
+def parse_detail(link, city, area_name):
+
+    res = session.get(link, timeout=15)
+
     res.encoding = "utf-8"
 
     soup = BeautifulSoup(res.text, "html.parser")
+
     text = soup.get_text("\n", strip=True)
 
-    rows = []
+    lines = [
+        line.strip()
+        for line in text.split("\n")
+        if line.strip()
+    ]
 
-    # 從搜尋結果文字直接切物件，永慶列表頁本身有部分物件摘要
-    pattern = re.compile(
-        r'(?P<title>.+?)\s+'
-        r'(?P<addr>.{2,20}[市縣].{1,10}[區鄉鎮市].{0,30}[路街巷弄段大道].*?)\s+'
-        r'(?P<type>整層住家|獨立套房|分租套房|雅房|車位|店面|辦公)\s+'
-        r'(?P<area>\d+(?:\.\d+)?坪)\s+'
-        r'(?P<floor>\d+/\d+樓|\d+樓|地下\d+樓|B\d+)\s+'
-        r'(?P<layout>[\d\-]+房.*?衛.*?)\s+'
-        r'(?P<price>[\d,]+)',
-        re.S
+    title = ""
+    price = ""
+    deposit = ""
+    addr = ""
+    floor = ""
+    area = ""
+    room_type = ""
+
+    for line in lines:
+
+        if (
+            len(line) > 5
+            and "元/月" not in line
+            and "押金" not in line
+            and "坪" not in line
+            and "樓" not in line
+        ):
+            title = line
+            break
+
+    price_match = re.search(r'[\d,]+\s*元/月', text)
+
+    if price_match:
+        price = price_match.group().replace(" ", "")
+
+    deposit_match = re.search(
+        r'押金\s*(?:[一二三四五六七八九十\d]+個月|面議|[\d,]+元)',
+        text
     )
 
-    for m in pattern.finditer(text):
-        rows.append({
-            "標題": m.group("title").strip()[-30:],
-            "租金": m.group("price").strip(),
-            "地址": m.group("addr").strip(),
-            "樓層": m.group("floor").strip(),
-            "坪數": m.group("area").strip(),
-            "格局": m.group("layout").strip(),
-            "房型": m.group("type").strip(),
-            "來源頁": list_url,
-        })
+    if deposit_match:
+        deposit = deposit_match.group().replace(" ", "")
 
-    return rows
+    address_patterns = [
+        rf'{city}.{{0,10}}{area_name}.{{0,30}}[路街巷弄段大道].*',
+        rf'{area_name}.{{0,30}}[路街巷弄段大道].*',
+    ]
+
+    for line in lines:
+
+        for pattern in address_patterns:
+
+            if re.search(pattern, line):
+                addr = line
+                break
+
+        if addr:
+            break
+
+    floor_patterns = [
+        r'\d+\s*樓\s*/\s*\d+\s*樓',
+        r'\d+F\s*/\s*\d+F',
+        r'地下\d+\s*樓',
+        r'\d+\s*樓',
+        r'B\d+',
+        r'頂樓加蓋',
+    ]
+
+    for pattern in floor_patterns:
+
+        floor_match = re.search(pattern, text)
+
+        if floor_match:
+            floor = floor_match.group().replace(" ", "")
+            break
+
+    area_match = re.search(r'\d+(?:\.\d+)?\s*坪', text)
+
+    if area_match:
+        area = area_match.group().replace(" ", "")
+
+    room_match = re.search(
+        r'\d+\s*房\s*\d+\s*廳\s*\d+\s*衛|'
+        r'獨立套房|分租套房|雅房|整層住家',
+        text
+    )
+
+    if room_match:
+        room_type = room_match.group().replace(" ", "")
+
+    return {
+        "縣市": city,
+        "地區": area_name,
+        "標題": title,
+        "租金": price,
+        "押金": deposit,
+        "地址": addr,
+        "樓層": floor,
+        "坪數": area,
+        "房型": room_type,
+        "連結": link
+    }
 
 
 def main():
-    city, area, max_pages = ask_user()
+
+    params = ask_user()
+
+    all_links = []
+
+    for page in range(1, params["max_pages"] + 1):
+
+        list_url = build_list_url(params, page)
+
+        links = get_house_links(list_url)
+
+        print(f"\n第 {page} 頁找到 {len(links)} 筆")
+
+        if not links:
+            break
+
+        all_links.extend(links)
+
+        time.sleep(1)
+
+    all_links = list(set(all_links))
+
+    print(f"\n總連結數：{len(all_links)}")
 
     rows = []
 
-    for page in range(1, max_pages + 1):
-        list_url = build_list_url(city, area, page)
+    for i, link in enumerate(all_links):
+
+        print(f"正在抓第 {i + 1}/{len(all_links)} 筆")
 
         try:
-            page_rows = parse_list_items(list_url)
-            print(f"第 {page} 頁抓到 {len(page_rows)} 筆")
-            rows.extend(page_rows)
+
+            data = parse_detail(
+                link,
+                params["city"],
+                params["area_name"]
+            )
+
+            rows.append(data)
 
         except Exception as e:
-            print("失敗：", list_url)
+
+            print("失敗：", link)
             print(e)
 
         time.sleep(1)
 
     df = pd.DataFrame(rows)
 
-    excel_name = "永慶租屋資料.xlsx"
-    csv_name = "永慶租屋資料.csv"
+    excel_name = "591租屋搜尋結果.xlsx"
+    csv_name = "591租屋搜尋結果.csv"
 
-    df.to_excel(excel_name, index=False)
-    df.to_csv(csv_name, index=False, encoding="utf-8-sig")
+    with pd.ExcelWriter(excel_name, engine="openpyxl") as writer:
+
+        df.to_excel(
+            writer,
+            index=False,
+            sheet_name="591租屋"
+        )
+
+    df.to_csv(
+        csv_name,
+        index=False,
+        encoding="utf-8-sig"
+    )
 
     print("\n完成")
-    print(f"Excel：{excel_name}")
-    print(f"CSV：{csv_name}")
+    print(f"已輸出 Excel：{excel_name}")
+    print(f"已輸出 CSV：{csv_name}")
     print(f"共 {len(df)} 筆資料")
 
 
