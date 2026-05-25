@@ -1,67 +1,103 @@
+# main.py
+
+
+import subprocess
+import os
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# ====== import 真正爬蟲 ======
-from clawler_591 import main as crawler_591
-from clawler_sinyi import main as crawler_sinyi
-from zuzutong import main as crawler_zuzutong
+from glob import glob
 
 
-# ====== 統一管理所有爬蟲 ======
-crawlers = [
-    crawler_591,
-    crawler_sinyi,
-    crawler_zuzutong
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ====== 要執行的爬蟲 ======
+crawler_files = [
+    "clawler_591.py",
+    "clawler_sinyi.py",
+    "zuzutong.py"
 ]
 
 
+# ====== 執行所有爬蟲 ======
 def run_all_crawlers():
 
-    all_data = []
+    for file in crawler_files:
 
-    with ThreadPoolExecutor(max_workers=len(crawlers)) as executor:
+        file_path = os.path.join(BASE_DIR, file)
 
-        futures = [
-            executor.submit(crawler)
-            for crawler in crawlers
-        ]
+        print(f"\n========== 開始執行 {file} ==========")
 
-        for future in as_completed(futures):
+        try:
 
-            try:
-                result = future.result()
+            subprocess.run(
+                ["python", file_path],
+                check=True
+            )
 
-                if result:
-                    all_data.extend(result)
+            print(f"\n{file} 執行完成")
 
-            except Exception as e:
-                print("爬蟲錯誤：", e)
+        except Exception as e:
 
-    return all_data
+            print(f"\n{file} 執行失敗")
+            print(e)
 
 
-# ====== 輸出 Excel ======
-def save_to_excel(data, filename="output.xlsx"):
+# ====== 合併所有 Excel ======
+def merge_excel_files():
 
-    df = pd.DataFrame(data)
+    excel_files = glob(os.path.join(BASE_DIR, "*.xlsx"))
 
-    columns_order = [
-        "title",
-        "price",
-        "source"
+    # 排除最後輸出的總表
+    excel_files = [
+        f for f in excel_files
+        if "總表" not in os.path.basename(f)
     ]
 
-    df = df.reindex(columns=columns_order)
+    if not excel_files:
+        print("\n找不到 Excel 檔案")
+        return
 
-    df.to_excel(filename, index=False)
+    all_df = []
 
-    print(f"已輸出：{filename}")
+    for file in excel_files:
+
+        try:
+
+            print(f"讀取：{os.path.basename(file)}")
+
+            df = pd.read_excel(file)
+
+            # 新增來源檔名
+            df["來源檔案"] = os.path.basename(file)
+
+            all_df.append(df)
+
+        except Exception as e:
+
+            print(f"讀取失敗：{file}")
+            print(e)
+
+    if not all_df:
+        print("\n沒有成功讀取的資料")
+        return
+
+    merged_df = pd.concat(all_df, ignore_index=True)
+
+    # ===== 去重 =====
+    merged_df.drop_duplicates(inplace=True)
+
+    output_path = os.path.join(BASE_DIR, "租屋總表.xlsx")
+
+    merged_df.to_excel(output_path, index=False)
+
+    print(f"\n已輸出總表：{output_path}")
+    print(f"總筆數：{len(merged_df)}")
 
 
 if __name__ == "__main__":
 
-    data = run_all_crawlers()
+    run_all_crawlers()
 
-    print("總資料筆數：", len(data))
+    merge_excel_files()
 
-    save_to_excel(data)
+    print("\n全部完成")
