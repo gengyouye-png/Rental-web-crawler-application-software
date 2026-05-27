@@ -140,6 +140,31 @@ def ask_user():
     }
 
 
+def params_from_config(config):
+    city = config.get("city") or "台中"
+    region = CITY_MAP.get(city, "Taichung-city")
+
+    area_name = config.get("area_name") or ""
+    area_id = AREA_MAP.get(city, {}).get(area_name, "")
+
+    kind_text = config.get("kind_text") or "獨立套房"
+    kind = KIND_MAP.get(kind_text, "rent1-use")
+
+    min_price = config.get("min_price") or "5000"
+    max_price = config.get("max_price") or "10000"
+
+    return {
+        "city": city,
+        "area_name": area_name,
+        "region": region,
+        "area_id": area_id,
+        "kind": kind,
+        "price": f"{min_price}-{max_price}-price",
+        "subsidy": bool(config.get("subsidy")),
+        "max_pages": int(config.get("max_pages") or 3),
+    }
+
+
 def build_list_url(params, page=1):
 
     query = {
@@ -301,13 +326,13 @@ def parse_detail(link, city, area_name):
     }
 
 
-def main():
+def crawl(config=None):
 
-    params = ask_user()
+    params = params_from_config(config) if config else ask_user()
 
     all_links = []
 
-    for page in range(1, 6):
+    for page in range(1, params["max_pages"] + 1):
 
         list_url = build_list_url(params, page)
 
@@ -351,13 +376,14 @@ def main():
 
     df = pd.DataFrame(rows)
 
-    df.to_excel(
-        f"信義租屋.{params['city']}_{params['area_name']}.xlsx",
-        index=False
-    )
-
     print("\n完成")
-    print(f"已輸出：信義租屋.{params['city']}_{params['area_name']}.xlsx")
+    print(f"共 {len(df)} 筆資料")
+
+    return rows
+
+
+def main():
+    crawl()
 
 
 if __name__ == "__main__":

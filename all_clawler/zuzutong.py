@@ -12,12 +12,6 @@ headers = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# ===== 使用者輸入 =====
-KEYWORD = input("請輸入搜尋關鍵字：")
-MAX_PRICE = int(input("請輸入最高租金："))
-MAX_PAGE = int(input("請輸入要爬幾頁："))
-# =====================
-
 
 def get_search_url(keyword, page):
     keyword = quote(keyword)
@@ -59,7 +53,7 @@ def get_object_links(driver, search_url):
     return links
 
 
-def crawl_detail(url):
+def crawl_detail(url, city="", area_name=""):
     soup = get_soup(url)
 
     title = ""
@@ -99,18 +93,43 @@ def crawl_detail(url):
             room_type = text
 
     return {
-        "title": title,
-        "price_text": price,
-        "price": parse_price(price),
-        "address": address,
-        "floor": floor,
-        "area": area,
-        "room_type": room_type,
-        "url": url
+        "縣市": city,
+        "地區": area_name,
+        "標題": title,
+        "租金": price,
+        "租金數字": parse_price(price),
+        "押金": "",
+        "地址": address,
+        "樓層": floor,
+        "坪數": area,
+        "房型": room_type,
+        "連結": url,
     }
 
 
-def main():
+def ask_user():
+    keyword = input("請輸入搜尋關鍵字：").strip()
+    max_price_text = input("請輸入最高租金：").strip()
+    max_page_text = input("請輸入要爬幾頁：").strip()
+
+    return {
+        "keyword": keyword,
+        "max_price": max_price_text or "10000",
+        "max_pages": int(max_page_text) if max_page_text.isdigit() else 3,
+        "city": "",
+        "area_name": "",
+    }
+
+
+def crawl(config=None):
+    config = config or ask_user()
+
+    keyword = config.get("keyword") or "租屋"
+    max_price = int(config.get("max_price") or 10000)
+    max_pages = int(config.get("max_pages") or 3)
+    city = config.get("city", "")
+    area_name = config.get("area_name", "")
+
     options = Options()
     options.add_argument("--start-maximized")
 
@@ -118,42 +137,54 @@ def main():
 
     all_links = []
 
-    for page in range(1, MAX_PAGE + 1):
-        search_url = get_search_url(KEYWORD, page)
+    try:
+        for page in range(1, max_pages + 1):
+            search_url = get_search_url(keyword, page)
 
-        print("\n搜尋頁：", search_url)
+            print("\n搜尋頁：", search_url)
 
-        links = get_object_links(driver, search_url)
+            links = get_object_links(driver, search_url)
 
-        print("找到連結數量：", len(links))
+            print("找到連結數量：", len(links))
 
-        all_links.extend(links)
-
-    driver.quit()
+            all_links.extend(links)
+    finally:
+        driver.quit()
 
     all_links = list(set(all_links))
 
     print("\n總物件數：", len(all_links))
 
+    rows = []
+
     for link in all_links:
         try:
             print("\n正在爬：", link)
 
-            house = crawl_detail(link)
+            house = crawl_detail(link, city, area_name)
 
-            if house["price"] <= MAX_PRICE:
-                print("標題：", house["title"])
-                print("租金：", house["price_text"])
-                print("地址：", house["address"])
-                print("樓層：", house["floor"])
-                print("坪數：", house["area"])
-                print("房型：", house["room_type"])
-                print("網址：", house["url"])
+            if house["租金數字"] <= max_price:
+                rows.append(house)
+
+                print("標題：", house["標題"])
+                print("租金：", house["租金"])
+                print("地址：", house["地址"])
+                print("樓層：", house["樓層"])
+                print("坪數：", house["坪數"])
+                print("房型：", house["房型"])
+                print("網址：", house["連結"])
 
         except Exception as e:
             print("爬取失敗：", e)
 
         time.sleep(1)
 
+    return rows
 
-main()
+
+def main():
+    crawl()
+
+
+if __name__ == "__main__":
+    main()

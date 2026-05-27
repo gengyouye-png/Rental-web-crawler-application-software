@@ -1,140 +1,126 @@
-from playwright.sync_api import sync_playwright
-import pandas as pd
 import re
 
-# =========================
-# 使用者輸入
-# =========================
-city = input("縣市（例：台中市）：")
-area = input("地區（例：西屯）：")
+from playwright.sync_api import sync_playwright
 
-url = f"https://rent.yungching.com.tw/list/{city}-{area}_c"
 
-rows = []
-seen = set()
+CITY_MAP = {
+    "台北": "台北市",
+    "新北": "新北市",
+    "桃園": "桃園市",
+    "台中": "台中市",
+    "台南": "台南市",
+    "高雄": "高雄市",
+    "彰化": "彰化縣",
+}
 
-# =========================
-# 開始 Playwright
-# =========================
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
-    page = browser.new_page()
 
-    page.goto(url)
-    page.wait_for_timeout(8000)
+def ask_user():
+    return {
+        "city": input("縣市（例：台中市）：").strip() or "台中市",
+        "area_name": input("地區（例：西屯）：").strip(),
+    }
 
-    # =========================
-    # 🔥 觸發 lazy load
-    # =========================
-    for _ in range(10):
-        page.mouse.wheel(0, 2500)
-        page.wait_for_timeout(1200)
 
-    # =========================
-    # 抓所有可點擊元素
-    # =========================
-    cards = page.locator("a[href]").all()
+def crawl(config=None):
+    config = config or ask_user()
 
-    real_cards = []
+    city = config.get("city") or "台中"
+    city_for_url = CITY_MAP.get(city, city)
+    area = config.get("area_name") or ""
+    url = f"https://rent.yungching.com.tw/list/{city_for_url}-{area}_c"
 
-    # =========================
-    # 🔥 過濾出「像房源的卡片」
-    # =========================
-    for c in cards:
-        try:
-            text = c.inner_text()
-        except:
-            continue
+    rows = []
+    seen = set()
 
-        if not text or len(text) < 30:
-            continue
-
-        # 房源特徵（比精準 selector 更穩）
-        if ("租" in text or "元/月" in text):
-            real_cards.append(c)
-
-    print("房源候選數:", len(real_cards))
-
-    # =========================
-    # 解析每一筆
-    # =========================
-    for c in real_cards:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
 
         try:
-            text = c.inner_text()
-        except:
-            continue
+            page.goto(url)
+            page.wait_for_timeout(8000)
 
-        lines = text.split("\n")
+            for _ in range(10):
+                page.mouse.wheel(0, 2500)
+                page.wait_for_timeout(1200)
 
-        # =========================
-        # title
-        # =========================
-        title = lines[0] if lines else ""
+            cards = page.locator("a[href]").all()
+            real_cards = []
 
-        # =========================
-        # price（🔥最穩版本）
-        # =========================
-        price = ""
-        price_num = None
-
-        m = re.search(r"([\d,]+)\s*元/月", text)
-
-        if m:
-            price = m.group()
-            try:
-                price_num = int(m.group(1).replace(",", ""))
-            except:
-                pass
-
-        # backup（防漏）
-        if price_num is None:
-            m2 = re.search(r"([\d,]+)", text)
-            if m2:
+            for card in cards:
                 try:
-                    price_num = int(m2.group(1).replace(",", ""))
-                    price = m2.group()
-                except:
-                    pass
+                    text = card.inner_text()
+                except Exception:
+                    continue
 
-        # =========================
-        # address
-        # =========================
-        addr = ""
-        for l in lines:
-            if ("路" in l or "街" in l or "巷" in l) and len(l) < 40:
-                addr = l
-                break
+                if not text or len(text) < 30:
+                    continue
 
-        # =========================
-        # link
-        # =========================
-        link = c.get_attribute("href")
+                if "租" in text or "元/月" in text:
+                    real_cards.append(card)
 
-        if not link:
-            continue
+            print("房源候選數:", len(real_cards))
 
-        # 去重
-        if link in seen:
-            continue
-        seen.add(link)
+            for card in real_cards:
+                try:
+                    text = card.inner_text()
+                except Exception:
+                    continue
 
-        rows.append({
-            "title": title,
-            "price": price,
-            "price_num": price_num,
-            "address": addr,
-            "link": link,
-            "raw": text[:120]
-        })
+                lines = text.split("\n")
+                title = lines[0] if lines else ""
 
-    browser.close()
+                price = ""
+                price_num = None
 
-# =========================
-# Excel輸出
-# =========================
-df = pd.DataFrame(rows)
-df.to_excel("永慶租屋_完整版.xlsx", index=False)
+                match = re.search(r"([\d,]+)\s*元/月", text)
 
-print("完成 ✔")
-print("總筆數:", len(rows))
+                if match:
+                    price = match.group()
+                    price_num = int(match.group(1).replace(",", ""))
+
+                if price_num is None:
+                    backup_match = re.search(r"([\d,]+)", text)
+                    if backup_match:
+                        price = backup_match.group()
+                        price_num = int(backup_match.group(1).replace(",", ""))
+
+                address = ""
+                for line in lines:
+                    if ("路" in line or "街" in line or "巷" in line) and len(line) < 40:
+                        address = line
+                        break
+
+                link = card.get_attribute("href")
+
+                if not link or link in seen:
+                    continue
+
+                seen.add(link)
+
+                rows.append({
+                    "縣市": city,
+                    "地區": area,
+                    "標題": title,
+                    "租金": price,
+                    "租金數字": price_num,
+                    "押金": "",
+                    "地址": address,
+                    "樓層": "",
+                    "坪數": "",
+                    "房型": "",
+                    "連結": link,
+                })
+        finally:
+            browser.close()
+
+    print("總筆數:", len(rows))
+    return rows
+
+
+def main():
+    crawl()
+
+
+if __name__ == "__main__":
+    main()

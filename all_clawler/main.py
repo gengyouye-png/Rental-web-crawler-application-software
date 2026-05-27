@@ -1,103 +1,126 @@
-# main.py
-
-
-import subprocess
+import importlib
 import os
+from datetime import datetime
+
 import pandas as pd
-from glob import glob
+
+from config import ask_search_config
+from schema import COLUMNS, normalize_rows
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 
-# ====== 要執行的爬蟲 ======
-crawler_files = [
-    "clawler_591.py",
-    "clawler_sinyi.py",
-    "zuzutong.py"
+CRAWLERS = [
+    {
+        "name": "591",
+        "module": "clawler_591",
+        "enabled": True,
+    },
+    {
+        "name": "信義",
+        "module": "sinyi",
+        "enabled": True,
+    },
+    {
+        "name": "租租通",
+        "module": "zuzutong",
+        "enabled": True,
+    },
+    {
+        "name": "永慶",
+        "module": "yungching",
+        "enabled": True,
+    },
 ]
 
 
-# ====== 執行所有爬蟲 ======
-def run_all_crawlers():
+def run_crawler(crawler, config):
+    print(f"\n========== 開始執行 {crawler['name']} ==========")
 
-    for file in crawler_files:
+    module = importlib.import_module(crawler["module"])
 
-        file_path = os.path.join(BASE_DIR, file)
+    if not hasattr(module, "crawl"):
+        raise AttributeError(f"{crawler['module']} 缺少 crawl(config) 函式")
 
-        print(f"\n========== 開始執行 {file} ==========")
+    rows = module.crawl(config)
+    normalized = normalize_rows(crawler["name"], rows)
 
-        try:
-
-            subprocess.run(
-                ["python", file_path],
-                check=True
-            )
-
-            print(f"\n{file} 執行完成")
-
-        except Exception as e:
-
-            print(f"\n{file} 執行失敗")
-            print(e)
+    print(f"{crawler['name']} 完成，共 {len(normalized)} 筆")
+    return normalized
 
 
-# ====== 合併所有 Excel ======
-def merge_excel_files():
-
-    excel_files = glob(os.path.join(BASE_DIR, "*.xlsx"))
-
-    # 排除最後輸出的總表
-    excel_files = [
-        f for f in excel_files
-        if "總表" not in os.path.basename(f)
-    ]
-
-    if not excel_files:
-        print("\n找不到 Excel 檔案")
+def save_results(rows):
+    if not rows:
+        print("\n沒有資料可以輸出")
         return
 
-    all_df = []
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    for file in excel_files:
+    df = pd.DataFrame(rows)
+    df = df.reindex(columns=COLUMNS)
+    df = dedupe_results(df)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    excel_path = os.path.join(OUTPUT_DIR, f"租屋總表_{timestamp}.xlsx")
+    csv_path = os.path.join(OUTPUT_DIR, f"租屋總表_{timestamp}.csv")
+
+    df.to_excel(excel_path, index=False)
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    print("\n========== 整合完成 ==========")
+    print(f"總筆數：{len(df)}")
+    print(f"Excel：{excel_path}")
+    print(f"CSV：{csv_path}")
+
+
+def dedupe_results(df):
+    df = df.copy()
+
+    for column in ["連結", "地址", "租金", "標題"]:
+        df[column] = df[column].fillna("").astype(str).str.strip()
+
+    has_link = df["連結"] != ""
+    with_link = df[has_link].drop_duplicates(subset=["連結"], keep="first")
+    without_link = df[~has_link]
+
+    df = pd.concat([with_link, without_link], ignore_index=True)
+
+    has_address_price = (df["地址"] != "") & (df["租金"] != "")
+    address_price_rows = df[has_address_price].drop_duplicates(
+        subset=["地址", "租金"],
+        keep="first",
+    )
+    other_rows = df[~has_address_price]
+
+    df = pd.concat([address_price_rows, other_rows], ignore_index=True)
+
+    has_title_address = (df["標題"] != "") & (df["地址"] != "")
+    title_address_rows = df[has_title_address].drop_duplicates(
+        subset=["標題", "地址"],
+        keep="first",
+    )
+    other_rows = df[~has_title_address]
+
+    return pd.concat([title_address_rows, other_rows], ignore_index=True)
+
+
+def main():
+    config = ask_search_config()
+    all_rows = []
+
+    for crawler in CRAWLERS:
+        if not crawler["enabled"]:
+            continue
 
         try:
+            all_rows.extend(run_crawler(crawler, config))
+        except Exception as exc:
+            print(f"{crawler['name']} 執行失敗：{exc}")
 
-            print(f"讀取：{os.path.basename(file)}")
-
-            df = pd.read_excel(file)
-
-            # 新增來源檔名
-            df["來源檔案"] = os.path.basename(file)
-
-            all_df.append(df)
-
-        except Exception as e:
-
-            print(f"讀取失敗：{file}")
-            print(e)
-
-    if not all_df:
-        print("\n沒有成功讀取的資料")
-        return
-
-    merged_df = pd.concat(all_df, ignore_index=True)
-
-    # ===== 去重 =====
-    merged_df.drop_duplicates(inplace=True)
-
-    output_path = os.path.join(BASE_DIR, "租屋總表.xlsx")
-
-    merged_df.to_excel(output_path, index=False)
-
-    print(f"\n已輸出總表：{output_path}")
-    print(f"總筆數：{len(merged_df)}")
+    save_results(all_rows)
 
 
 if __name__ == "__main__":
-
-    run_all_crawlers()
-
-    merge_excel_files()
-
-    print("\n全部完成")
+    main()

@@ -115,6 +115,31 @@ def ask_user():
     }
 
 
+def params_from_config(config):
+    city = config.get("city") or "台中"
+    region = CITY_MAP.get(city, 8)
+
+    area_name = config.get("area_name") or ""
+    area_id = AREA_MAP.get(city, {}).get(area_name, "")
+
+    kind_text = config.get("kind_text") or "獨立套房"
+    kind = KIND_MAP.get(kind_text, 2)
+
+    min_price = config.get("min_price") or "5000"
+    max_price = config.get("max_price") or "10000"
+
+    return {
+        "city": city,
+        "area_name": area_name,
+        "region": region,
+        "area_id": area_id,
+        "kind": kind,
+        "price": f"{min_price}_{max_price}",
+        "subsidy": bool(config.get("subsidy")),
+        "max_pages": int(config.get("max_pages") or 3),
+    }
+
+
 def build_list_url(params, page=1):
 
     query = {
@@ -282,9 +307,9 @@ def parse_detail(link, city, area_name):
     }
 
 
-def main():
+def crawl(config=None):
 
-    params = ask_user()
+    params = params_from_config(config) if config else ask_user()
 
     all_links = []
 
@@ -332,27 +357,14 @@ def main():
 
     df = pd.DataFrame(rows)
 
-    excel_name = "591租屋搜尋結果.xlsx"
-    csv_name = "591租屋搜尋結果.csv"
-
-    with pd.ExcelWriter(excel_name, engine="openpyxl") as writer:
-
-        df.to_excel(
-            writer,
-            index=False,
-            sheet_name="591租屋"
-        )
-
-    df.to_csv(
-        csv_name,
-        index=False,
-        encoding="utf-8-sig"
-    )
-
     print("\n完成")
-    print(f"已輸出 Excel：{excel_name}")
-    print(f"已輸出 CSV：{csv_name}")
     print(f"共 {len(df)} 筆資料")
+
+    return rows
+
+
+def main():
+    crawl()
 
 
 if __name__ == "__main__":
