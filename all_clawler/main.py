@@ -6,7 +6,10 @@ import pandas as pd
 
 from config import ask_search_config
 from schema import COLUMNS, normalize_rows
+from db import init_db, save_to_db
+import db
 
+print(db.__file__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -26,11 +29,6 @@ CRAWLERS = [
     {
         "name": "租租通",
         "module": "zuzutong",
-        "enabled": True,
-    },
-    {
-        "name": "永慶",
-        "module": "yungching",
         "enabled": True,
     },
 ]
@@ -61,6 +59,7 @@ def save_results(rows):
     df = pd.DataFrame(rows)
     df = df.reindex(columns=COLUMNS)
     df = dedupe_results(df)
+    save_to_db(df.to_dict("records"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = os.path.join(OUTPUT_DIR, f"租屋總表_{timestamp}.xlsx")
@@ -107,6 +106,7 @@ def dedupe_results(df):
 
 
 def main():
+    init_db()
     config = ask_search_config()
     all_rows = []
 
