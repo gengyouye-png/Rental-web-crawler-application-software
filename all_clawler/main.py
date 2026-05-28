@@ -5,11 +5,8 @@ from datetime import datetime
 import pandas as pd
 
 from config import ask_search_config
+from db import DB_PATH, init_db, save_to_db
 from schema import COLUMNS, normalize_rows
-from db import init_db, save_to_db
-import db
-
-print(db.__file__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -59,7 +56,7 @@ def save_results(rows):
     df = pd.DataFrame(rows)
     df = df.reindex(columns=COLUMNS)
     df = dedupe_results(df)
-    save_to_db(df.to_dict("records"))
+    inserted_count = save_to_db(df.to_dict("records"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = os.path.join(OUTPUT_DIR, f"租屋總表_{timestamp}.xlsx")
@@ -70,6 +67,8 @@ def save_results(rows):
 
     print("\n========== 整合完成 ==========")
     print(f"總筆數：{len(df)}")
+    print(f"SQLite：{DB_PATH}")
+    print(f"SQLite 新增筆數：{inserted_count}")
     print(f"Excel：{excel_path}")
     print(f"CSV：{csv_path}")
 
@@ -77,6 +76,7 @@ def save_results(rows):
 def dedupe_results(df):
     df = df.copy()
 
+    # 第一層用連結去重，第二層再用地址/租金與標題/地址抓跨平台重複物件。
     for column in ["連結", "地址", "租金", "標題"]:
         df[column] = df[column].fillna("").astype(str).str.strip()
 
