@@ -128,21 +128,61 @@ def dedupe_results(df):
     return pd.concat([title_address_rows, other_rows], ignore_index=True)
 
 
-def run_all_crawlers(config):
+def run_all_crawlers(config, progress_callback=None):
     init_db()
     all_rows = []
     errors = []
+    enabled_crawlers = [crawler for crawler in CRAWLERS if crawler["enabled"]]
+    total_crawlers = len(enabled_crawlers)
 
-    for crawler in CRAWLERS:
-        if not crawler["enabled"]:
-            continue
+    if progress_callback:
+        progress_callback({
+            "current": 0,
+            "total": total_crawlers,
+            "source": "",
+            "message": "準備開始爬蟲",
+        })
 
+    for index, crawler in enumerate(enabled_crawlers, start=1):
         try:
-            all_rows.extend(run_crawler(crawler, config))
+            if progress_callback:
+                progress_callback({
+                    "current": index - 1,
+                    "total": total_crawlers,
+                    "source": crawler["name"],
+                    "message": f"正在爬取 {crawler['name']}",
+                })
+
+            rows = run_crawler(crawler, config)
+            all_rows.extend(rows)
+
+            if progress_callback:
+                progress_callback({
+                    "current": index,
+                    "total": total_crawlers,
+                    "source": crawler["name"],
+                    "message": f"{crawler['name']} 完成，共 {len(rows)} 筆",
+                })
         except Exception as exc:
             message = f"{crawler['name']} 執行失敗：{exc}"
             print(message)
             errors.append(message)
+
+            if progress_callback:
+                progress_callback({
+                    "current": index,
+                    "total": total_crawlers,
+                    "source": crawler["name"],
+                    "message": message,
+                })
+
+    if progress_callback:
+        progress_callback({
+            "current": total_crawlers,
+            "total": total_crawlers,
+            "source": "",
+            "message": "正在整理與儲存資料",
+        })
 
     result = save_results(all_rows)
     result["errors"] = errors

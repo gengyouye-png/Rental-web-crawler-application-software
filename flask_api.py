@@ -75,6 +75,13 @@ def crawl_houses():
         "config": config,
         "result": None,
         "error": None,
+        "progress": {
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "source": "",
+            "message": "等待開始",
+        },
         "created_at": _now_text(),
         "started_at": None,
         "finished_at": None,
@@ -317,10 +324,27 @@ def _build_house_filters(city="", district="", source="", keyword=""):
 
 def _run_crawl_job(job_id, config):
     with CRAWL_LOCK:
-        _update_job(job_id, status="running", started_at=_now_text())
+        _update_job(
+            job_id,
+            status="running",
+            started_at=_now_text(),
+            progress={
+                "current": 0,
+                "total": 0,
+                "percent": 0,
+                "source": "",
+                "message": "爬蟲啟動中",
+            },
+        )
 
         try:
-            result = run_all_crawlers(config)
+            result = run_all_crawlers(
+                config,
+                progress_callback=lambda progress: _update_job_progress(
+                    job_id,
+                    progress,
+                ),
+            )
         except Exception as exc:
             _update_job(
                 job_id,
@@ -328,6 +352,13 @@ def _run_crawl_job(job_id, config):
                 error={
                     "message": str(exc),
                     "traceback": traceback.format_exc(),
+                },
+                progress={
+                    "current": 0,
+                    "total": 0,
+                    "percent": 0,
+                    "source": "",
+                    "message": f"爬蟲失敗：{exc}",
                 },
                 finished_at=_now_text(),
             )
@@ -337,6 +368,13 @@ def _run_crawl_job(job_id, config):
             job_id,
             status="done",
             result=result,
+            progress={
+                "current": 1,
+                "total": 1,
+                "percent": 100,
+                "source": "",
+                "message": "爬蟲完成",
+            },
             finished_at=_now_text(),
         )
 
@@ -346,6 +384,24 @@ def _update_job(job_id, **changes):
         job = JOBS.get(job_id)
         if job:
             job.update(changes)
+
+
+def _update_job_progress(job_id, progress):
+    total = max(int(progress.get("total") or 0), 0)
+    current = max(int(progress.get("current") or 0), 0)
+    percent = int((current / total) * 100) if total else 0
+    percent = max(0, min(percent, 100))
+
+    _update_job(
+        job_id,
+        progress={
+            "current": current,
+            "total": total,
+            "percent": percent,
+            "source": str(progress.get("source") or ""),
+            "message": str(progress.get("message") or ""),
+        },
+    )
 
 
 def _get_active_job_locked():

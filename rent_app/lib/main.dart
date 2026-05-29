@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const RentCrawlerApp());
@@ -65,9 +66,9 @@ class RentDashboardPage extends StatefulWidget {
 }
 
 class _RentDashboardPageState extends State<RentDashboardPage> {
-  final _apiBaseController = TextEditingController(
-    text: 'http://10.111.121.145:5000',
-  );
+  static const _usbApiBase = 'http://127.0.0.1:5000';
+
+  final _apiBaseController = TextEditingController(text: _usbApiBase);
   final _cityController = TextEditingController(text: '台中');
   final _districtController = TextEditingController(text: '西屯區');
   final _kindController = TextEditingController(text: '獨立套房');
@@ -79,6 +80,8 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   bool _subsidy = false;
   bool _loadingHouses = false;
   bool _startingCrawl = false;
+  bool _checkingHealth = false;
+  String _connectionMode = 'usb';
   String? _error;
   String? _healthText;
   Timer? _jobTimer;
@@ -97,7 +100,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   @override
   void initState() {
     super.initState();
-    _loadInitialData();
+    _bootstrap();
   }
 
   @override
@@ -114,8 +117,15 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     super.dispose();
   }
 
+  Future<void> _bootstrap() async {
+    await _loadConnectionSettings();
+    await _loadInitialData();
+  }
+
   Future<void> _loadInitialData() async {
-    await _checkHealth();
+    final connected = await _checkHealth();
+    if (!connected) return;
+
     await Future.wait([
       _fetchStats(),
       _fetchHouses(reset: true),
@@ -123,17 +133,67 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     ]);
   }
 
-  Future<void> _checkHealth() async {
+  Future<void> _loadConnectionSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString('connectionMode') ?? 'usb';
+    final apiBase = prefs.getString('apiBase') ?? _usbApiBase;
+
+    setState(() {
+      _connectionMode = mode;
+      _apiBaseController.text = mode == 'usb' ? _usbApiBase : apiBase;
+    });
+  }
+
+  Future<void> _saveConnectionSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('connectionMode', _connectionMode);
+    await prefs.setString('apiBase', _apiBase);
+  }
+
+  Future<void> _useUsbMode() async {
+    setState(() {
+      _connectionMode = 'usb';
+      _apiBaseController.text = _usbApiBase;
+      _error = null;
+    });
+    await _saveConnectionSettings();
+    await _loadInitialData();
+  }
+
+  Future<void> _useCustomMode() async {
+    setState(() {
+      _connectionMode = 'custom';
+      _error = null;
+    });
+    await _saveConnectionSettings();
+  }
+
+  Future<bool> _checkHealth() async {
+    setState(() {
+      _checkingHealth = true;
+      _healthText = '檢查中';
+    });
+
     try {
       final data = await _getJson('/api/health');
+      final connected = data['ok'] == true;
       setState(() {
-        _healthText = data['ok'] == true ? 'API 已連線' : 'API 異常';
+        _healthText = connected ? 'API 已連線' : 'API 異常';
+        if (connected) {
+          _error = null;
+        }
       });
+      return connected;
     } catch (error) {
       setState(() {
         _healthText = 'API 未連線';
-        _error = error.toString();
+        _error = _connectionMode == 'usb'
+            ? 'USB 模式未連線。請確認 Flask 已啟動，並執行 adb reverse tcp:5000 tcp:5000。'
+            : error.toString();
       });
+      return false;
+    } finally {
+      setState(() => _checkingHealth = false);
     }
   }
 
@@ -260,7 +320,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     Map<String, String>? query,
   ]) async {
     final uri = Uri.parse('$_apiBase$path').replace(queryParameters: query);
-    final response = await http.get(uri);
+    final response = await http.get(uri).timeout(const Duration(seconds: 6));
     return _decodeResponse(response);
   }
 
@@ -269,11 +329,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     Map<String, dynamic> body,
   ) async {
     final uri = Uri.parse('$_apiBase$path');
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 6));
     return _decodeResponse(response);
   }
 
@@ -378,14 +440,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: _apiBaseController,
-              decoration: const InputDecoration(
-                labelText: 'API 伺服器',
-                prefixIcon: Icon(Icons.dns_outlined),
-              ),
-              onSubmitted: (_) => _loadInitialData(),
-            ),
+            _buildConnectionBox(),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -485,6 +540,103 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     );
   }
 
+  Widget _buildConnectionBox() {
+    final isUsb = _connectionMode == 'usb';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.usb, color: Color(0xFF0F766E)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '連線設定',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              _StatusPill(
+                label: isUsb ? 'USB' : '自訂',
+                color: isUsb
+                    ? const Color(0xFF0F766E)
+                    : const Color(0xFF2563EB),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(
+                value: 'usb',
+                icon: Icon(Icons.usb),
+                label: Text('USB'),
+              ),
+              ButtonSegment(
+                value: 'custom',
+                icon: Icon(Icons.edit),
+                label: Text('自訂'),
+              ),
+            ],
+            selected: {_connectionMode},
+            onSelectionChanged: (selected) {
+              if (selected.first == 'usb') {
+                _useUsbMode();
+              } else {
+                _useCustomMode();
+              }
+            },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _apiBaseController,
+            readOnly: isUsb,
+            decoration: InputDecoration(
+              labelText: 'API 伺服器',
+              prefixIcon: const Icon(Icons.dns_outlined),
+              helperText: isUsb
+                  ? '手機透過 USB 轉接到電腦 Flask'
+                  : '輸入 Wi-Fi 或其他 Flask 位址',
+            ),
+            onSubmitted: (_) async {
+              await _saveConnectionSettings();
+              await _loadInitialData();
+            },
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: _checkingHealth
+                ? null
+                : () async {
+                    await _saveConnectionSettings();
+                    await _loadInitialData();
+                  },
+            icon: _checkingHealth
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.wifi_tethering),
+            label: const Text('測試連線'),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'USB 模式需在電腦執行：adb reverse tcp:5000 tcp:5000',
+            style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatsRow() {
     final stats = _stats;
     final firstSource = stats?.bySource.isNotEmpty == true
@@ -524,6 +676,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   }
 
   Widget _buildHouseList() {
+    final start = _total == 0 ? 0 : _offset + 1;
+    final end = (_offset + _houses.length).clamp(0, _total);
+    final page = _total == 0 ? 0 : (_offset ~/ _limit) + 1;
+    final pageCount = _total == 0 ? 0 : ((_total - 1) ~/ _limit) + 1;
+    final canGoPrevious = _offset > 0 && !_loadingHouses;
+    final canGoNext = _offset + _limit < _total && !_loadingHouses;
+
     return Card(
       child: Column(
         children: [
@@ -540,28 +699,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: '上一頁',
-                  onPressed: _offset == 0
-                      ? null
-                      : () {
-                          _offset = (_offset - _limit).clamp(0, _total);
-                          _fetchHouses();
-                        },
-                  icon: const Icon(Icons.chevron_left),
-                ),
                 Text(
-                  '${_offset + 1}-${(_offset + _houses.length).clamp(0, _total)}',
-                ),
-                IconButton(
-                  tooltip: '下一頁',
-                  onPressed: _offset + _limit >= _total
-                      ? null
-                      : () {
-                          _offset += _limit;
-                          _fetchHouses();
-                        },
-                  icon: const Icon(Icons.chevron_right),
+                  '$start-$end / 第 $page/$pageCount 頁',
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -585,6 +728,39 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                       );
                     },
                   ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: canGoPrevious
+                        ? () {
+                            _offset = (_offset - _limit).clamp(0, _total);
+                            _fetchHouses();
+                          }
+                        : null,
+                    icon: const Icon(Icons.chevron_left),
+                    label: const Text('上一頁'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: canGoNext
+                        ? () {
+                            _offset += _limit;
+                            _fetchHouses();
+                          }
+                        : null,
+                    icon: const Icon(Icons.chevron_right),
+                    label: const Text('下一頁'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -651,6 +827,7 @@ class CrawlJob {
     required this.status,
     this.result,
     this.error,
+    required this.progress,
     this.createdAt = '',
     this.startedAt,
     this.finishedAt,
@@ -660,6 +837,7 @@ class CrawlJob {
   final String status;
   final Map<String, dynamic>? result;
   final Map<String, dynamic>? error;
+  final CrawlProgress progress;
   final String createdAt;
   final String? startedAt;
   final String? finishedAt;
@@ -672,9 +850,38 @@ class CrawlJob {
       status: json['status']?.toString() ?? 'unknown',
       result: json['result'] is Map<String, dynamic> ? json['result'] : null,
       error: json['error'] is Map<String, dynamic> ? json['error'] : null,
+      progress: CrawlProgress.fromJson(
+        json['progress'] is Map<String, dynamic> ? json['progress'] : null,
+      ),
       createdAt: json['created_at']?.toString() ?? '',
       startedAt: json['started_at']?.toString(),
       finishedAt: json['finished_at']?.toString(),
+    );
+  }
+}
+
+class CrawlProgress {
+  CrawlProgress({
+    required this.current,
+    required this.total,
+    required this.percent,
+    required this.source,
+    required this.message,
+  });
+
+  final int current;
+  final int total;
+  final int percent;
+  final String source;
+  final String message;
+
+  factory CrawlProgress.fromJson(Map<String, dynamic>? json) {
+    return CrawlProgress(
+      current: json?['current'] as int? ?? 0,
+      total: json?['total'] as int? ?? 0,
+      percent: json?['percent'] as int? ?? 0,
+      source: json?['source']?.toString() ?? '',
+      message: json?['message']?.toString() ?? '',
     );
   }
 }
@@ -953,6 +1160,15 @@ class _JobStatusCard extends StatelessWidget {
     final result = current?.result;
     final inserted = result?['inserted'];
     final total = result?['total'];
+    final progress = current?.progress;
+    final progressValue = progress == null
+        ? 0.0
+        : (progress.percent.clamp(0, 100) / 100).toDouble();
+    final message = status == 'idle'
+        ? '尚未啟動爬蟲'
+        : progress?.message.isNotEmpty == true
+        ? progress!.message
+        : status;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -961,22 +1177,58 @@ class _JobStatusCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                progress == null || progress.total == 0
+                    ? status
+                    : '${progress.percent}%',
+                style: TextStyle(color: color, fontWeight: FontWeight.w800),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              status == 'idle'
-                  ? '尚未啟動爬蟲'
-                  : '$status${inserted == null ? '' : ' · 新增 $inserted / 整理 $total'}',
-              style: const TextStyle(fontWeight: FontWeight.w700),
+          if (current?.isActive == true || status == 'done') ...[
+            const SizedBox(height: 10),
+            LinearProgressIndicator(
+              value: progressValue == 0 && current?.isActive == true
+                  ? null
+                  : progressValue,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(999),
             ),
-          ),
+            const SizedBox(height: 8),
+            Text(
+              progress == null || progress.total == 0
+                  ? '等待進度回報'
+                  : '來源：${progress.source.isEmpty ? '整理資料' : progress.source} · ${progress.current}/${progress.total}',
+              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+            ),
+          ],
+          if (inserted != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              '新增 $inserted 筆，整理 $total 筆',
+              style: const TextStyle(
+                color: Color(0xFF374151),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );
