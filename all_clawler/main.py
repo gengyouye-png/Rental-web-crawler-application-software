@@ -4,9 +4,14 @@ from datetime import datetime
 
 import pandas as pd
 
-from config import ask_search_config
-from db import DB_PATH, init_db, save_to_db
-from schema import COLUMNS, normalize_rows
+try:
+    from .config import ask_search_config
+    from .db import DB_PATH, init_db, save_to_db
+    from .schema import COLUMNS, normalize_rows
+except ImportError:
+    from config import ask_search_config
+    from db import DB_PATH, init_db, save_to_db
+    from schema import COLUMNS, normalize_rows
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -34,7 +39,11 @@ CRAWLERS = [
 def run_crawler(crawler, config):
     print(f"\n========== 開始執行 {crawler['name']} ==========")
 
-    module = importlib.import_module(crawler["module"])
+    module_name = crawler["module"]
+    if __package__:
+        module_name = f"{__package__}.{module_name}"
+
+    module = importlib.import_module(module_name)
 
     if not hasattr(module, "crawl"):
         raise AttributeError(f"{crawler['module']} 缺少 crawl(config) 函式")
@@ -49,7 +58,13 @@ def run_crawler(crawler, config):
 def save_results(rows):
     if not rows:
         print("\n沒有資料可以輸出")
-        return
+        return {
+            "total": 0,
+            "inserted": 0,
+            "db_path": DB_PATH,
+            "excel_path": None,
+            "csv_path": None,
+        }
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -71,6 +86,14 @@ def save_results(rows):
     print(f"SQLite 新增筆數：{inserted_count}")
     print(f"Excel：{excel_path}")
     print(f"CSV：{csv_path}")
+
+    return {
+        "total": len(df),
+        "inserted": inserted_count,
+        "db_path": DB_PATH,
+        "excel_path": excel_path,
+        "csv_path": csv_path,
+    }
 
 
 def dedupe_results(df):
@@ -105,10 +128,10 @@ def dedupe_results(df):
     return pd.concat([title_address_rows, other_rows], ignore_index=True)
 
 
-def main():
+def run_all_crawlers(config):
     init_db()
-    config = ask_search_config()
     all_rows = []
+    errors = []
 
     for crawler in CRAWLERS:
         if not crawler["enabled"]:
@@ -117,9 +140,19 @@ def main():
         try:
             all_rows.extend(run_crawler(crawler, config))
         except Exception as exc:
-            print(f"{crawler['name']} 執行失敗：{exc}")
+            message = f"{crawler['name']} 執行失敗：{exc}"
+            print(message)
+            errors.append(message)
 
-    save_results(all_rows)
+    result = save_results(all_rows)
+    result["errors"] = errors
+    return result
+
+
+def main():
+    config = ask_search_config()
+    run_all_crawlers(config)
+
 
 
 if __name__ == "__main__":

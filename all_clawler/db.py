@@ -25,13 +25,16 @@ HOUSE_COLUMNS = {
 
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
 
 
 def init_db():
     """建立 SQLite 資料表；如果舊表缺欄位，會自動補上。"""
     with get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode = WAL")
 
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS houses (
@@ -104,7 +107,7 @@ def save_to_db(rows):
                 row.get("坪數", ""),
                 row.get("房型", ""),
                 row.get("樓層", ""),
-                row.get("連結", ""),
+                row.get("連結") or None,
                 now,
             ))
 
