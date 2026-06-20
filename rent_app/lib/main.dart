@@ -92,7 +92,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   HouseStats? _stats;
   int _total = 0;
   int _offset = 0;
-  final int _limit = 20;
+  final int _limit = 10;
 
   String get _apiBase =>
       _apiBaseController.text.trim().replaceAll(RegExp(r'/+$'), '');
@@ -257,6 +257,24 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     } finally {
       setState(() => _loadingHouses = false);
     }
+  }
+
+  void _goToPreviousPage() {
+    if (_loadingHouses || _offset == 0) return;
+
+    setState(() {
+      _offset = (_offset - _limit).clamp(0, _total);
+    });
+    _fetchHouses();
+  }
+
+  void _goToNextPage() {
+    if (_loadingHouses || _offset + _limit >= _total) return;
+
+    setState(() {
+      _offset += _limit;
+    });
+    _fetchHouses();
   }
 
   Future<void> _startCrawl() async {
@@ -692,21 +710,30 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               children: [
                 Expanded(
                   child: Text(
-                    '房源列表 $_total 筆',
+                    '房源列表',
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-                Text(
-                  '$start-$end / 第 $page/$pageCount 頁',
-                  style: const TextStyle(
-                    color: Color(0xFF6B7280),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                _StatusPill(label: '$_total 筆', color: const Color(0xFF0F766E)),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: _PaginationControls(
+              start: start,
+              end: end,
+              total: _total,
+              page: page,
+              pageCount: pageCount,
+              canGoPrevious: canGoPrevious,
+              canGoNext: canGoNext,
+              onPrevious: _goToPreviousPage,
+              onNext: _goToNextPage,
+              dense: true,
             ),
           ),
           const Divider(height: 1),
@@ -736,12 +763,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: canGoPrevious
-                        ? () {
-                            _offset = (_offset - _limit).clamp(0, _total);
-                            _fetchHouses();
-                          }
-                        : null,
+                    onPressed: canGoPrevious ? _goToPreviousPage : null,
                     icon: const Icon(Icons.chevron_left),
                     label: const Text('上一頁'),
                   ),
@@ -749,12 +771,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: canGoNext
-                        ? () {
-                            _offset += _limit;
-                            _fetchHouses();
-                          }
-                        : null,
+                    onPressed: canGoNext ? _goToNextPage : null,
                     icon: const Icon(Icons.chevron_right),
                     label: const Text('下一頁'),
                   ),
@@ -912,6 +929,84 @@ class StatItem {
 
   final String label;
   final int count;
+}
+
+class _PaginationControls extends StatelessWidget {
+  const _PaginationControls({
+    required this.start,
+    required this.end,
+    required this.total,
+    required this.page,
+    required this.pageCount,
+    required this.canGoPrevious,
+    required this.canGoNext,
+    required this.onPrevious,
+    required this.onNext,
+    this.dense = false,
+  });
+
+  final int start;
+  final int end;
+  final int total;
+  final int page;
+  final int pageCount;
+  final bool canGoPrevious;
+  final bool canGoNext;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: dense ? 10 : 12,
+        vertical: dense ? 8 : 10,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Row(
+        children: [
+          IconButton.filledTonal(
+            tooltip: '上一頁',
+            onPressed: canGoPrevious ? onPrevious : null,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  total == 0 ? '沒有資料' : '第 $page / $pageCount 頁',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  total == 0 ? '請重新整理或開始爬蟲' : '顯示 $start-$end，共 $total 筆',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton.filled(
+            tooltip: '下一頁',
+            onPressed: canGoNext ? onNext : null,
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MetricCard extends StatelessWidget {
