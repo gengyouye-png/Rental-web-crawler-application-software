@@ -71,7 +71,7 @@ def save_results(rows):
     df = pd.DataFrame(rows)
     df = df.reindex(columns=COLUMNS)
     df = dedupe_results(df)
-    inserted_count = save_to_db(df.to_dict("records"))
+    saved_count = save_to_db(df.to_dict("records"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = os.path.join(OUTPUT_DIR, f"租屋總表_{timestamp}.xlsx")
@@ -83,13 +83,15 @@ def save_results(rows):
     print("\n========== 整合完成 ==========")
     print(f"總筆數：{len(df)}")
     print(f"SQLite：{DB_PATH}")
-    print(f"SQLite 新增筆數：{inserted_count}")
+    print(f"SQLite 目前保存筆數：{saved_count}")
     print(f"Excel：{excel_path}")
     print(f"CSV：{csv_path}")
 
     return {
         "total": len(df),
-        "inserted": inserted_count,
+        "inserted": saved_count,
+        "saved": saved_count,
+        "storage_mode": "latest_snapshot",
         "db_path": DB_PATH,
         "excel_path": excel_path,
         "csv_path": csv_path,

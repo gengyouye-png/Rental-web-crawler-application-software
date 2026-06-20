@@ -1,0 +1,2 @@
+-r all_clawler/requirements.txt
+gunicorn

@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'url_opener_stub.dart' if (dart.library.html) 'url_opener_web.dart';
 
 void main() {
   runApp(const RentCrawlerApp());
@@ -53,8 +58,192 @@ class RentCrawlerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const RentDashboardPage(),
+      home: const AppIntroGate(),
     );
+  }
+}
+
+class AppIntroGate extends StatefulWidget {
+  const AppIntroGate({super.key});
+
+  @override
+  State<AppIntroGate> createState() => _AppIntroGateState();
+}
+
+class _AppIntroGateState extends State<AppIntroGate>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _showDashboard = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..forward();
+
+    Timer(const Duration(milliseconds: 1700), () {
+      if (!mounted) return;
+      setState(() => _showDashboard = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 520),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: _showDashboard
+          ? const RentDashboardPage(key: ValueKey('dashboard'))
+          : _StartupIntroPage(
+              key: const ValueKey('intro'),
+              animation: _controller,
+            ),
+    );
+  }
+}
+
+class _StartupIntroPage extends StatelessWidget {
+  const _StartupIntroPage({super.key, required this.animation});
+
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    final fade = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+    final slide = Tween<Offset>(
+      begin: const Offset(0, 0.08),
+      end: Offset.zero,
+    ).animate(fade);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F8FA),
+      body: Center(
+        child: FadeTransition(
+          opacity: fade,
+          child: SlideTransition(
+            position: slide,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedBuilder(
+                  animation: animation,
+                  builder: (context, child) {
+                    final value = Curves.easeOutBack.transform(
+                      animation.value.clamp(0.0, 1.0),
+                    );
+                    return Transform.scale(
+                      scale: 0.86 + value * 0.14,
+                      child: child,
+                    );
+                  },
+                  child: Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE6F4F1),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: const Color(0xFFB7E0D8)),
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const Icon(
+                          Icons.home_work_outlined,
+                          color: Color(0xFF0F766E),
+                          size: 44,
+                        ),
+                        Positioned.fill(
+                          child: AnimatedBuilder(
+                            animation: animation,
+                            builder: (context, _) {
+                              return CustomPaint(
+                                painter: _IntroScanPainter(animation.value),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  '租屋搜尋儀表板',
+                  style: TextStyle(
+                    color: Color(0xFF111827),
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '正在整理最新房源',
+                  style: TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: 220,
+                  child: AnimatedBuilder(
+                    animation: animation,
+                    builder: (context, _) {
+                      return LinearProgressIndicator(
+                        value: animation.value.clamp(0.0, 1.0),
+                        minHeight: 7,
+                        borderRadius: BorderRadius.circular(999),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IntroScanPainter extends CustomPainter {
+  _IntroScanPainter(this.progress);
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scanY = size.height * (0.18 + progress * 0.62);
+    final paint = Paint()
+      ..shader = LinearGradient(
+        colors: const [Color(0x000F766E), Color(0x660F766E), Color(0x000F766E)],
+        stops: const [0, 0.5, 1],
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+      ).createShader(Rect.fromLTWH(16, scanY - 10, size.width - 32, 20));
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(16, scanY - 10, size.width - 32, 20),
+        const Radius.circular(999),
+      ),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _IntroScanPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }
 
@@ -66,30 +255,37 @@ class RentDashboardPage extends StatefulWidget {
 }
 
 class _RentDashboardPageState extends State<RentDashboardPage> {
-  static const _usbApiBase = 'http://127.0.0.1:5000';
+  static const _localApiBase = 'http://127.0.0.1:5000';
+  static String get _webApiBase =>
+      Uri.base.origin == 'null' ? _localApiBase : Uri.base.origin;
+  static String get _defaultApiBase => kIsWeb ? _webApiBase : _localApiBase;
+  static String get _defaultConnectionMode => kIsWeb ? 'web' : 'usb';
 
-  final _apiBaseController = TextEditingController(text: _usbApiBase);
-  final _cityController = TextEditingController(text: '台中');
-  final _districtController = TextEditingController(text: '西屯區');
-  final _kindController = TextEditingController(text: '獨立套房');
-  final _minPriceController = TextEditingController(text: '5000');
-  final _maxPriceController = TextEditingController(text: '10000');
+  final _apiBaseController = TextEditingController(text: _defaultApiBase);
+  final _cityController = TextEditingController();
+  final _districtController = TextEditingController();
+  final _kindController = TextEditingController();
+  final _minPriceController = TextEditingController();
+  final _maxPriceController = TextEditingController();
   final _maxPagesController = TextEditingController(text: '1');
   final _keywordController = TextEditingController();
 
   bool _subsidy = false;
   bool _loadingHouses = false;
+  bool _loadingTrends = false;
   bool _startingCrawl = false;
   bool _checkingHealth = false;
-  String _connectionMode = 'usb';
+  String _connectionMode = _defaultConnectionMode;
   String? _error;
   String? _healthText;
+  String? _searchStatusText;
   Timer? _jobTimer;
 
   List<House> _houses = [];
   House? _selectedHouse;
   CrawlJob? _job;
   HouseStats? _stats;
+  TrendData? _trends;
   int _total = 0;
   int _offset = 0;
   final int _limit = 10;
@@ -128,6 +324,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
 
     await Future.wait([
       _fetchStats(),
+      _fetchTrends(),
       _fetchHouses(reset: true),
       _fetchLatestJob(),
     ]);
@@ -135,12 +332,19 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
 
   Future<void> _loadConnectionSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final mode = prefs.getString('connectionMode') ?? 'usb';
-    final apiBase = prefs.getString('apiBase') ?? _usbApiBase;
+    final savedMode = prefs.getString('connectionMode');
+    final mode = kIsWeb && savedMode == 'usb'
+        ? 'web'
+        : savedMode ?? _defaultConnectionMode;
+    final apiBase = prefs.getString('apiBase') ?? _defaultApiBase;
 
     setState(() {
       _connectionMode = mode;
-      _apiBaseController.text = mode == 'usb' ? _usbApiBase : apiBase;
+      _apiBaseController.text = switch (mode) {
+        'web' => _webApiBase,
+        'usb' => _localApiBase,
+        _ => apiBase,
+      };
     });
   }
 
@@ -150,10 +354,20 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     await prefs.setString('apiBase', _apiBase);
   }
 
+  Future<void> _useWebMode() async {
+    setState(() {
+      _connectionMode = 'web';
+      _apiBaseController.text = _webApiBase;
+      _error = null;
+    });
+    await _saveConnectionSettings();
+    await _loadInitialData();
+  }
+
   Future<void> _useUsbMode() async {
     setState(() {
       _connectionMode = 'usb';
-      _apiBaseController.text = _usbApiBase;
+      _apiBaseController.text = _localApiBase;
       _error = null;
     });
     await _saveConnectionSettings();
@@ -187,9 +401,11 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     } catch (error) {
       setState(() {
         _healthText = 'API 未連線';
-        _error = _connectionMode == 'usb'
-            ? 'USB 模式未連線。請確認 Flask 已啟動，並執行 adb reverse tcp:5000 tcp:5000。'
-            : error.toString();
+        _error = switch (_connectionMode) {
+          'web' => '公開網站模式無法連線到同網域 API，請確認後端服務已啟動且 /api/health 可存取。',
+          'usb' => 'USB 模式未連線。請確認 Flask 已啟動，並執行 adb reverse tcp:5000 tcp:5000。',
+          _ => error.toString(),
+        };
       });
       return false;
     } finally {
@@ -219,6 +435,40 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     }
   }
 
+  Future<void> _fetchTrends() async {
+    if (_loadingTrends) return;
+
+    final query = {
+      'days': '30',
+      if (_cityController.text.trim().isNotEmpty)
+        'city': _cityController.text.trim(),
+      if (_districtController.text.trim().isNotEmpty)
+        'district': _districtController.text.trim(),
+      if (_kindController.text.trim().isNotEmpty)
+        'kind': _kindController.text.trim(),
+      if (_minPriceController.text.trim().isNotEmpty)
+        'min_price': _minPriceController.text.trim(),
+      if (_maxPriceController.text.trim().isNotEmpty)
+        'max_price': _maxPriceController.text.trim(),
+      if (_keywordController.text.trim().isNotEmpty)
+        'keyword': _keywordController.text.trim(),
+    };
+
+    setState(() {
+      _loadingTrends = true;
+      _searchStatusText ??= '正在更新租金趨勢';
+    });
+
+    try {
+      final data = await _getJson('/api/houses/trends', query);
+      setState(() => _trends = TrendData.fromJson(data));
+    } catch (error) {
+      setState(() => _error = error.toString());
+    } finally {
+      setState(() => _loadingTrends = false);
+    }
+  }
+
   Future<void> _fetchHouses({bool reset = false}) async {
     if (_loadingHouses) return;
 
@@ -230,6 +480,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
         'city': _cityController.text.trim(),
       if (_districtController.text.trim().isNotEmpty)
         'district': _districtController.text.trim(),
+      if (_kindController.text.trim().isNotEmpty)
+        'kind': _kindController.text.trim(),
+      if (_minPriceController.text.trim().isNotEmpty)
+        'min_price': _minPriceController.text.trim(),
+      if (_maxPriceController.text.trim().isNotEmpty)
+        'max_price': _maxPriceController.text.trim(),
       if (_keywordController.text.trim().isNotEmpty)
         'keyword': _keywordController.text.trim(),
     };
@@ -237,6 +493,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     setState(() {
       _loadingHouses = true;
       _error = null;
+      _searchStatusText = reset ? '正在搜尋符合條件的房源' : '正在載入分頁';
     });
 
     try {
@@ -251,12 +508,56 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
         _selectedHouse = items.isEmpty ? null : items.first;
         _total = data['total'] as int? ?? items.length;
         _offset = nextOffset;
+        _searchStatusText = items.isEmpty
+            ? '搜尋完成，沒有符合條件的房源'
+            : '搜尋完成，找到 $_total 筆房源';
       });
     } catch (error) {
-      setState(() => _error = error.toString());
+      setState(() {
+        _error = error.toString();
+        _searchStatusText = '搜尋失敗';
+      });
     } finally {
       setState(() => _loadingHouses = false);
     }
+  }
+
+  Future<void> _searchHouses() async {
+    if (_loadingHouses || _loadingTrends) return;
+
+    setState(() {
+      _error = null;
+      _searchStatusText = '開始搜尋';
+    });
+
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+
+    try {
+      await Future.wait([
+        _fetchStats(),
+        _fetchTrends(),
+        _fetchHouses(reset: true),
+      ]);
+    } finally {
+      if (mounted) {
+        Future<void>.delayed(const Duration(seconds: 3), () {
+          if (!mounted || _loadingHouses || _loadingTrends) return;
+          if (_searchStatusText?.startsWith('搜尋完成') == true) {
+            setState(() => _searchStatusText = null);
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _clearSearchFilters() async {
+    _cityController.clear();
+    _districtController.clear();
+    _kindController.clear();
+    _minPriceController.clear();
+    _maxPriceController.clear();
+    _keywordController.clear();
+    await _searchHouses();
   }
 
   void _goToPreviousPage() {
@@ -325,7 +626,11 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
 
         if (!updated.isActive) {
           _jobTimer?.cancel();
-          await Future.wait([_fetchStats(), _fetchHouses(reset: true)]);
+          await Future.wait([
+            _fetchStats(),
+            _fetchTrends(),
+            _fetchHouses(reset: true),
+          ]);
         }
       } catch (error) {
         setState(() => _error = error.toString());
@@ -407,27 +712,33 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   }
 
   Widget _buildDesktopLayout() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 300, child: _buildSearchPanel()),
-          const SizedBox(width: 16),
-          Expanded(
-            flex: 5,
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1440),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                _buildSearchPanel(),
+                const SizedBox(height: 16),
                 _buildStatsRow(),
-                const SizedBox(height: 12),
-                Expanded(child: _buildHouseList()),
+                const SizedBox(height: 16),
+                SizedBox(height: 320, child: _buildTrendPanel()),
+                const SizedBox(height: 16),
+                SizedBox(height: 780, child: _buildHouseList()),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 520,
+                  child: _HouseDetailPanel(house: _selectedHouse),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),
-          const SizedBox(width: 16),
-          SizedBox(width: 360, child: _HouseDetailPanel(house: _selectedHouse)),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -439,9 +750,11 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
         const SizedBox(height: 12),
         _buildStatsRow(),
         const SizedBox(height: 12),
-        SizedBox(height: 520, child: _buildHouseList()),
+        SizedBox(height: 300, child: _buildTrendPanel()),
         const SizedBox(height: 12),
-        _HouseDetailPanel(house: _selectedHouse),
+        SizedBox(height: 700, child: _buildHouseList()),
+        const SizedBox(height: 12),
+        SizedBox(height: 520, child: _HouseDetailPanel(house: _selectedHouse)),
       ],
     );
   }
@@ -454,7 +767,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              '搜尋與爬蟲',
+              '搜尋房源',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 16),
@@ -465,14 +778,24 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                 Expanded(
                   child: TextField(
                     controller: _cityController,
-                    decoration: const InputDecoration(labelText: '縣市'),
+                    decoration: const InputDecoration(
+                      labelText: '縣市',
+                      hintText: '全部',
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchHouses(),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _districtController,
-                    decoration: const InputDecoration(labelText: '地區'),
+                    decoration: const InputDecoration(
+                      labelText: '地區',
+                      hintText: '全部',
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchHouses(),
                   ),
                 ),
               ],
@@ -480,7 +803,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
             const SizedBox(height: 12),
             TextField(
               controller: _kindController,
-              decoration: const InputDecoration(labelText: '房型'),
+              decoration: const InputDecoration(
+                labelText: '房型',
+                hintText: '全部房型',
+              ),
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _searchHouses(),
             ),
             const SizedBox(height: 12),
             Row(
@@ -489,7 +817,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                   child: TextField(
                     controller: _minPriceController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '最低租金'),
+                    decoration: const InputDecoration(
+                      labelText: '最低租金',
+                      hintText: '不限',
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchHouses(),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -497,7 +830,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                   child: TextField(
                     controller: _maxPriceController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '最高租金'),
+                    decoration: const InputDecoration(
+                      labelText: '最高租金',
+                      hintText: '不限',
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchHouses(),
                   ),
                 ),
               ],
@@ -519,13 +857,35 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
             TextField(
               controller: _keywordController,
               decoration: const InputDecoration(
-                labelText: '列表關鍵字',
+                labelText: '關鍵字搜尋',
                 prefixIcon: Icon(Icons.search),
               ),
-              onSubmitted: (_) => _fetchHouses(reset: true),
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _searchHouses(),
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
+              onPressed: _loadingHouses || _loadingTrends
+                  ? null
+                  : _searchHouses,
+              icon: _loadingHouses || _loadingTrends
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.search),
+              label: Text(_loadingHouses || _loadingTrends ? '搜尋中' : '搜尋房源'),
+            ),
+            if (_searchStatusText != null) ...[
+              const SizedBox(height: 10),
+              _SearchProgressNotice(
+                message: _searchStatusText!,
+                active: _loadingHouses || _loadingTrends,
+              ),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
               onPressed: _startingCrawl || (_job?.isActive ?? false)
                   ? null
                   : _startCrawl,
@@ -539,12 +899,17 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               label: const Text('開始爬蟲'),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _loadingHouses
-                  ? null
-                  : () => _fetchHouses(reset: true),
+            TextButton.icon(
+              onPressed: _loadingHouses ? null : _searchHouses,
               icon: const Icon(Icons.refresh),
               label: const Text('重新整理列表'),
+            ),
+            TextButton.icon(
+              onPressed: _loadingHouses || _loadingTrends
+                  ? null
+                  : _clearSearchFilters,
+              icon: const Icon(Icons.filter_alt_off_outlined),
+              label: const Text('清除條件看全部'),
             ),
             const SizedBox(height: 16),
             _JobStatusCard(job: _job),
@@ -560,6 +925,18 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
 
   Widget _buildConnectionBox() {
     final isUsb = _connectionMode == 'usb';
+    final isWeb = _connectionMode == 'web';
+    final isLockedApiBase = isUsb || isWeb;
+    final modeLabel = switch (_connectionMode) {
+      'web' => '網站',
+      'usb' => 'USB',
+      _ => '自訂',
+    };
+    final modeColor = switch (_connectionMode) {
+      'web' => const Color(0xFF0F766E),
+      'usb' => const Color(0xFF0F766E),
+      _ => const Color(0xFF2563EB),
+    };
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -573,7 +950,10 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.usb, color: Color(0xFF0F766E)),
+              Icon(
+                isWeb ? Icons.public : Icons.usb,
+                color: const Color(0xFF0F766E),
+              ),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -581,17 +961,17 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                   style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
-              _StatusPill(
-                label: isUsb ? 'USB' : '自訂',
-                color: isUsb
-                    ? const Color(0xFF0F766E)
-                    : const Color(0xFF2563EB),
-              ),
+              _StatusPill(label: modeLabel, color: modeColor),
             ],
           ),
           const SizedBox(height: 10),
           SegmentedButton<String>(
             segments: const [
+              ButtonSegment(
+                value: 'web',
+                icon: Icon(Icons.public),
+                label: Text('網站'),
+              ),
               ButtonSegment(
                 value: 'usb',
                 icon: Icon(Icons.usb),
@@ -605,7 +985,9 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
             ],
             selected: {_connectionMode},
             onSelectionChanged: (selected) {
-              if (selected.first == 'usb') {
+              if (selected.first == 'web') {
+                _useWebMode();
+              } else if (selected.first == 'usb') {
                 _useUsbMode();
               } else {
                 _useCustomMode();
@@ -615,13 +997,15 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
           const SizedBox(height: 10),
           TextField(
             controller: _apiBaseController,
-            readOnly: isUsb,
+            readOnly: isLockedApiBase,
             decoration: InputDecoration(
               labelText: 'API 伺服器',
               prefixIcon: const Icon(Icons.dns_outlined),
-              helperText: isUsb
-                  ? '手機透過 USB 轉接到電腦 Flask'
-                  : '輸入 Wi-Fi 或其他 Flask 位址',
+              helperText: switch (_connectionMode) {
+                'web' => '公開網站會使用目前網域的 Flask API',
+                'usb' => '手機透過 USB 轉接到電腦 Flask',
+                _ => '輸入 Wi-Fi 或其他 Flask 位址',
+              },
             ),
             onSubmitted: (_) async {
               await _saveConnectionSettings();
@@ -645,11 +1029,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                 : const Icon(Icons.wifi_tethering),
             label: const Text('測試連線'),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'USB 模式需在電腦執行：adb reverse tcp:5000 tcp:5000',
-            style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
-          ),
+          if (isUsb) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'USB 模式需在電腦執行：adb reverse tcp:5000 tcp:5000',
+              style: TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+            ),
+          ],
         ],
       ),
     );
@@ -693,6 +1079,82 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     );
   }
 
+  Widget _buildTrendPanel() {
+    final trends = _trends;
+    final items = trends?.items ?? const <TrendPoint>[];
+    final summary = trends?.summary;
+    final scope = _joinParts([
+      _cityController.text.trim(),
+      _districtController.text.trim(),
+      _kindController.text.trim(),
+    ]);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.show_chart, color: Color(0xFF0F766E)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '租金趨勢',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        scope.isEmpty ? '近 30 天全部房源' : '近 30 天 · $scope',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _TrendSummaryPill(
+                  label: '平均',
+                  value: _formatMoney(summary?.avgPrice),
+                  color: const Color(0xFF0F766E),
+                ),
+                const SizedBox(width: 8),
+                _TrendSummaryPill(
+                  label: '新增',
+                  value: '${summary?.total ?? 0}',
+                  color: const Color(0xFFE11D48),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: _loadingTrends
+                  ? const Center(child: CircularProgressIndicator())
+                  : items.isEmpty
+                  ? const _EmptyTrendState()
+                  : Column(
+                      children: [
+                        Expanded(child: _TrendLineChart(points: items)),
+                        const SizedBox(height: 10),
+                        _TrendTable(points: items),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildHouseList() {
     final start = _total == 0 ? 0 : _offset + 1;
     final end = (_offset + _houses.length).clamp(0, _total);
@@ -700,6 +1162,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     final pageCount = _total == 0 ? 0 : ((_total - 1) ~/ _limit) + 1;
     final canGoPrevious = _offset > 0 && !_loadingHouses;
     final canGoNext = _offset + _limit < _total && !_loadingHouses;
+    final isSearching = _loadingHouses || _loadingTrends;
 
     return Card(
       child: Column(
@@ -710,10 +1173,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               children: [
                 Expanded(
                   child: Text(
-                    '房源列表',
-                    style: const TextStyle(
+                    isSearching ? '搜尋房源中' : '房源列表',
+                    style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
+                      color: isSearching
+                          ? const Color(0xFF0F766E)
+                          : const Color(0xFF111827),
                     ),
                   ),
                 ),
@@ -721,6 +1187,14 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               ],
             ),
           ),
+          if (_searchStatusText != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: _SearchProgressNotice(
+                message: _searchStatusText!,
+                active: isSearching,
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: _PaginationControls(
@@ -738,23 +1212,32 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: _loadingHouses
-                ? const Center(child: CircularProgressIndicator())
-                : _houses.isEmpty
-                ? const _EmptyState()
-                : ListView.separated(
-                    itemCount: _houses.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final house = _houses[index];
-                      return _HouseListTile(
-                        house: house,
-                        selected: house.id == _selectedHouse?.id,
-                        onTap: () => setState(() => _selectedHouse = house),
-                      );
-                    },
-                  ),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: _loadingHouses
+                  ? const _HouseListSkeleton(key: ValueKey('house-loading'))
+                  : _houses.isEmpty
+                  ? const _EmptyState(key: ValueKey('house-empty'))
+                  : ListView.separated(
+                      key: ValueKey('house-list-$_offset-${_houses.length}'),
+                      itemCount: _houses.length,
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final house = _houses[index];
+                        return _AnimatedHouseListItem(
+                          index: index,
+                          child: _HouseListTile(
+                            house: house,
+                            selected: house.id == _selectedHouse?.id,
+                            onTap: () => setState(() => _selectedHouse = house),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ),
           const Divider(height: 1),
           Padding(
@@ -924,6 +1407,76 @@ class HouseStats {
   }
 }
 
+class TrendData {
+  TrendData({required this.items, required this.summary});
+
+  final List<TrendPoint> items;
+  final TrendSummary summary;
+
+  factory TrendData.fromJson(Map<String, dynamic> json) {
+    final items = (json['items'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(TrendPoint.fromJson)
+        .toList();
+
+    return TrendData(
+      items: items,
+      summary: TrendSummary.fromJson(
+        json['summary'] is Map<String, dynamic> ? json['summary'] : null,
+      ),
+    );
+  }
+}
+
+class TrendPoint {
+  TrendPoint({
+    required this.date,
+    required this.count,
+    required this.avgPrice,
+    required this.minPrice,
+    required this.maxPrice,
+  });
+
+  final String date;
+  final int count;
+  final int? avgPrice;
+  final int? minPrice;
+  final int? maxPrice;
+
+  factory TrendPoint.fromJson(Map<String, dynamic> json) {
+    return TrendPoint(
+      date: json['date']?.toString() ?? '',
+      count: _readInt(json['count']) ?? 0,
+      avgPrice: _readInt(json['avg_price']),
+      minPrice: _readInt(json['min_price']),
+      maxPrice: _readInt(json['max_price']),
+    );
+  }
+}
+
+class TrendSummary {
+  TrendSummary({
+    required this.total,
+    required this.avgPrice,
+    required this.minPrice,
+    required this.maxPrice,
+  });
+
+  final int total;
+  final int? avgPrice;
+  final int? minPrice;
+  final int? maxPrice;
+
+  factory TrendSummary.fromJson(Map<String, dynamic>? json) {
+    return TrendSummary(
+      total: _readInt(json?['total']) ?? 0,
+      avgPrice: _readInt(json?['avg_price']),
+      minPrice: _readInt(json?['min_price']),
+      maxPrice: _readInt(json?['max_price']),
+    );
+  }
+}
+
 class StatItem {
   StatItem({required this.label, required this.count});
 
@@ -1052,6 +1605,640 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
+class _TrendSummaryPill extends StatelessWidget {
+  const _TrendSummaryPill({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 76),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SearchProgressNotice extends StatelessWidget {
+  const _SearchProgressNotice({required this.message, required this.active});
+
+  final String message;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? const Color(0xFF0F766E) : const Color(0xFF2563EB);
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                active ? Icons.manage_search : Icons.check_circle_outline,
+                color: color,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          if (active) ...[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              minHeight: 6,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HouseListSkeleton extends StatefulWidget {
+  const _HouseListSkeleton({super.key});
+
+  @override
+  State<_HouseListSkeleton> createState() => _HouseListSkeletonState();
+}
+
+class _HouseListSkeletonState extends State<_HouseListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ListView.separated(
+          padding: EdgeInsets.zero,
+          itemCount: 6,
+          separatorBuilder: (context, index) => const Divider(height: 1),
+          itemBuilder: (context, index) => _SkeletonHouseCard(
+            progress: _controller.value,
+            compact: index.isOdd,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonHouseCard extends StatelessWidget {
+  const _SkeletonHouseCard({required this.progress, required this.compact});
+
+  final double progress;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        _ShimmerBlock(
+                          progress: progress,
+                          width: 62,
+                          height: 24,
+                          radius: 6,
+                        ),
+                        const SizedBox(width: 8),
+                        _ShimmerBlock(
+                          progress: progress,
+                          width: 132,
+                          height: 14,
+                          radius: 6,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _ShimmerBlock(
+                      progress: progress,
+                      width: compact ? 360 : 520,
+                      height: 22,
+                      radius: 7,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _ShimmerBlock(
+                    progress: progress,
+                    width: 112,
+                    height: 24,
+                    radius: 7,
+                  ),
+                  const SizedBox(height: 10),
+                  _ShimmerBlock(
+                    progress: progress,
+                    width: 88,
+                    height: 34,
+                    radius: 8,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ShimmerBlock(
+                progress: progress,
+                width: 86,
+                height: 28,
+                radius: 6,
+              ),
+              _ShimmerBlock(
+                progress: progress,
+                width: 74,
+                height: 28,
+                radius: 6,
+              ),
+              _ShimmerBlock(
+                progress: progress,
+                width: 98,
+                height: 28,
+                radius: 6,
+              ),
+              _ShimmerBlock(
+                progress: progress,
+                width: 82,
+                height: 28,
+                radius: 6,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _ShimmerBlock(
+            progress: progress,
+            width: compact ? 420 : 620,
+            height: 18,
+            radius: 6,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShimmerBlock extends StatelessWidget {
+  const _ShimmerBlock({
+    required this.progress,
+    required this.width,
+    required this.height,
+    required this.radius,
+  });
+
+  final double progress;
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final blockWidth = math.min(width, constraints.maxWidth);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: CustomPaint(
+            painter: _ShimmerPainter(progress),
+            child: SizedBox(width: blockWidth, height: height),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ShimmerPainter extends CustomPainter {
+  _ShimmerPainter(this.progress);
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final basePaint = Paint()..color = const Color(0xFFE5E7EB);
+    canvas.drawRect(Offset.zero & size, basePaint);
+
+    final shimmerWidth = size.width * 0.55;
+    final shimmerCenter =
+        (size.width + shimmerWidth * 2) * progress - shimmerWidth;
+    final rect = Rect.fromLTWH(
+      shimmerCenter - shimmerWidth / 2,
+      0,
+      shimmerWidth,
+      size.height,
+    );
+    final paint = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0x00FFFFFF), Color(0x99FFFFFF), Color(0x00FFFFFF)],
+      ).createShader(rect);
+
+    canvas.drawRect(rect, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShimmerPainter oldDelegate) {
+    return oldDelegate.progress != progress;
+  }
+}
+
+class _AnimatedHouseListItem extends StatelessWidget {
+  const _AnimatedHouseListItem({required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final delay = math.min(index * 45, 260);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 260 + delay),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        final opacityStart = delay / (260 + delay);
+        final opacity = value <= opacityStart
+            ? 0.0
+            : ((value - opacityStart) / (1 - opacityStart)).clamp(0.0, 1.0);
+        return Opacity(
+          opacity: opacity,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - opacity)),
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+class _TrendLineChart extends StatelessWidget {
+  const _TrendLineChart({required this.points});
+
+  final List<TrendPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _TrendChartPainter(points),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _TrendChartPainter extends CustomPainter {
+  _TrendChartPainter(this.points);
+
+  final List<TrendPoint> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = const Color(0xFFE5E7EB)
+      ..strokeWidth = 1;
+    final pricePaint = Paint()
+      ..color = const Color(0xFF0F766E)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final countPaint = Paint()
+      ..color = const Color(0xFFE11D48)
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final dotPaint = Paint()..style = PaintingStyle.fill;
+    final labelStyle = const TextStyle(
+      color: Color(0xFF6B7280),
+      fontSize: 10,
+      fontWeight: FontWeight.w600,
+    );
+
+    const left = 42.0;
+    const right = 12.0;
+    const top = 10.0;
+    const bottom = 24.0;
+    final chart = Rect.fromLTWH(
+      left,
+      top,
+      math.max(1, size.width - left - right),
+      math.max(1, size.height - top - bottom),
+    );
+
+    for (var i = 0; i <= 3; i++) {
+      final y = chart.top + chart.height * i / 3;
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
+    }
+
+    final prices = points
+        .map((point) => point.avgPrice)
+        .whereType<int>()
+        .where((price) => price > 0)
+        .toList();
+    final counts = points.map((point) => point.count).toList();
+
+    if (prices.isEmpty && counts.isEmpty) return;
+
+    final minPrice = prices.isEmpty ? 0 : prices.reduce(math.min);
+    final maxPrice = prices.isEmpty ? 1 : prices.reduce(math.max);
+    final maxCount = counts.isEmpty ? 1 : counts.reduce(math.max);
+    final priceSpan = math.max(1, maxPrice - minPrice);
+    final countSpan = math.max(1, maxCount);
+    final step = points.length == 1 ? 0 : chart.width / (points.length - 1);
+
+    Offset pointOffset(int index, double value, double min, double span) {
+      final x =
+          chart.left + (points.length == 1 ? chart.width / 2 : step * index);
+      final y = chart.bottom - ((value - min) / span) * chart.height;
+      return Offset(x, y.clamp(chart.top, chart.bottom));
+    }
+
+    final pricePath = Path();
+    var hasPriceStart = false;
+    final countPath = Path();
+
+    for (var i = 0; i < points.length; i++) {
+      final price = points[i].avgPrice;
+      if (price != null && price > 0) {
+        final offset = pointOffset(
+          i,
+          price.toDouble(),
+          minPrice.toDouble(),
+          priceSpan.toDouble(),
+        );
+        if (hasPriceStart) {
+          pricePath.lineTo(offset.dx, offset.dy);
+        } else {
+          pricePath.moveTo(offset.dx, offset.dy);
+          hasPriceStart = true;
+        }
+      }
+
+      final countOffset = pointOffset(
+        i,
+        points[i].count.toDouble(),
+        0,
+        countSpan.toDouble(),
+      );
+      if (i == 0) {
+        countPath.moveTo(countOffset.dx, countOffset.dy);
+      } else {
+        countPath.lineTo(countOffset.dx, countOffset.dy);
+      }
+    }
+
+    if (hasPriceStart) canvas.drawPath(pricePath, pricePaint);
+    canvas.drawPath(countPath, countPaint);
+
+    for (var i = 0; i < points.length; i++) {
+      final price = points[i].avgPrice;
+      if (price != null && price > 0) {
+        dotPaint.color = const Color(0xFF0F766E);
+        canvas.drawCircle(
+          pointOffset(
+            i,
+            price.toDouble(),
+            minPrice.toDouble(),
+            priceSpan.toDouble(),
+          ),
+          3.5,
+          dotPaint,
+        );
+      }
+      dotPaint.color = const Color(0xFFE11D48);
+      canvas.drawCircle(
+        pointOffset(i, points[i].count.toDouble(), 0, countSpan.toDouble()),
+        3,
+        dotPaint,
+      );
+    }
+
+    _paintText(
+      canvas,
+      Offset(0, chart.top - 2),
+      _formatMoney(maxPrice),
+      labelStyle,
+    );
+    _paintText(
+      canvas,
+      Offset(0, chart.bottom - 12),
+      _formatMoney(minPrice),
+      labelStyle,
+    );
+
+    if (points.isNotEmpty) {
+      _paintText(
+        canvas,
+        Offset(chart.left, chart.bottom + 8),
+        _shortDate(points.first.date),
+        labelStyle,
+      );
+      final lastLabel = _shortDate(points.last.date);
+      final lastPainter = _textPainter(lastLabel, labelStyle);
+      lastPainter.layout();
+      lastPainter.paint(
+        canvas,
+        Offset(chart.right - lastPainter.width, chart.bottom + 8),
+      );
+    }
+
+    _paintLegend(canvas, chart);
+  }
+
+  void _paintLegend(Canvas canvas, Rect chart) {
+    final legendStyle = const TextStyle(
+      color: Color(0xFF374151),
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+    );
+    final y = chart.top + 4;
+    final x = chart.right - 142;
+    final pricePaint = Paint()
+      ..color = const Color(0xFF0F766E)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    final countPaint = Paint()
+      ..color = const Color(0xFFE11D48)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(Offset(x, y + 6), Offset(x + 18, y + 6), pricePaint);
+    _paintText(canvas, Offset(x + 24, y), '平均租金', legendStyle);
+    canvas.drawLine(Offset(x + 82, y + 6), Offset(x + 100, y + 6), countPaint);
+    _paintText(canvas, Offset(x + 106, y), '新增', legendStyle);
+  }
+
+  void _paintText(Canvas canvas, Offset offset, String text, TextStyle style) {
+    final painter = _textPainter(text, style)..layout();
+    painter.paint(canvas, offset);
+  }
+
+  TextPainter _textPainter(String text, TextStyle style) {
+    return TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrendChartPainter oldDelegate) {
+    return oldDelegate.points != points;
+  }
+}
+
+class _TrendTable extends StatelessWidget {
+  const _TrendTable({required this.points});
+
+  final List<TrendPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final recent = points.length <= 3
+        ? points.reversed.toList()
+        : points.sublist(points.length - 3).reversed.toList();
+
+    return Row(
+      children: recent.map((point) {
+        return Expanded(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _shortDate(point.date),
+                  style: const TextStyle(
+                    color: Color(0xFF6B7280),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _formatMoney(point.avgPrice),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F766E),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  '新增 ${point.count} 筆',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF374151),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _EmptyTrendState extends StatelessWidget {
+  const _EmptyTrendState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.query_stats, size: 38, color: Color(0xFF9CA3AF)),
+          SizedBox(height: 10),
+          Text('近 30 天沒有可統計的房源', style: TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
 class _HouseListTile extends StatelessWidget {
   const _HouseListTile({
     required this.house,
@@ -1070,53 +2257,151 @@ class _HouseListTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SourceBadge(source: house.source),
-                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      house.title.isEmpty ? '未命名房源' : house.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _SourceBadge(source: house.source),
+                            const SizedBox(width: 8),
+                            if (house.createdAt.isNotEmpty)
+                              Flexible(
+                                child: Text(
+                                  house.createdAt,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF6B7280),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          house.title.isEmpty ? '未命名房源' : house.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Text(
-                    house.price.isEmpty ? '-' : house.price,
-                    style: const TextStyle(
-                      color: Color(0xFFE11D48),
-                      fontWeight: FontWeight.w800,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        house.price.isEmpty ? '-' : house.price,
+                        style: const TextStyle(
+                          color: Color(0xFFE11D48),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (house.link.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () => _openHouseLink(context, house.link),
+                          icon: const Icon(Icons.open_in_new, size: 17),
+                          label: const Text('查看'),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                _joinParts([
-                  house.district,
-                  house.address,
-                  house.area,
-                  house.roomType,
-                  house.floor,
-                ]),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF6B7280)),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _InfoChip(icon: Icons.place_outlined, text: house.district),
+                  _InfoChip(icon: Icons.square_foot, text: house.area),
+                  _InfoChip(
+                    icon: Icons.meeting_room_outlined,
+                    text: house.roomType,
+                  ),
+                  _InfoChip(icon: Icons.layers_outlined, text: house.floor),
+                ],
               ),
+              if (house.address.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.location_on_outlined,
+                      size: 17,
+                      color: Color(0xFF6B7280),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        house.address,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF4B5563),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    if (text.trim().isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: const Color(0xFF0F766E)),
+          const SizedBox(width: 5),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Color(0xFF374151),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1177,6 +2462,28 @@ class _HouseDetailPanel extends StatelessWidget {
                       color: Color(0xFFE11D48),
                     ),
                   ),
+                  if (selected.link.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                _openHouseLink(context, selected.link),
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('開啟房源'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filledTonal(
+                          tooltip: '複製連結',
+                          onPressed: () =>
+                              _copyHouseLink(context, selected.link),
+                          icon: const Icon(Icons.content_copy),
+                        ),
+                      ],
+                    ),
+                  ],
                   const Divider(height: 28),
                   _DetailRow(label: '地址', value: selected.address),
                   _DetailRow(
@@ -1190,11 +2497,20 @@ class _HouseDetailPanel extends StatelessWidget {
                   _DetailRow(label: '建立時間', value: selected.createdAt),
                   const Spacer(),
                   if (selected.link.isNotEmpty)
-                    SelectableText(
-                      selected.link,
-                      style: const TextStyle(
-                        color: Color(0xFF0F766E),
-                        fontWeight: FontWeight.w600,
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: SelectableText(
+                        selected.link,
+                        style: const TextStyle(
+                          color: Color(0xFF0F766E),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                 ],
@@ -1253,7 +2569,7 @@ class _JobStatusCard extends StatelessWidget {
       _ => const Color(0xFF6B7280),
     };
     final result = current?.result;
-    final inserted = result?['inserted'];
+    final saved = result?['saved'] ?? result?['inserted'];
     final total = result?['total'];
     final progress = current?.progress;
     final progressValue = progress == null
@@ -1314,10 +2630,10 @@ class _JobStatusCard extends StatelessWidget {
               style: const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
             ),
           ],
-          if (inserted != null) ...[
+          if (saved != null) ...[
             const SizedBox(height: 6),
             Text(
-              '新增 $inserted 筆，整理 $total 筆',
+              '目前保存 $saved 筆，整理 $total 筆',
               style: const TextStyle(
                 color: Color(0xFF374151),
                 fontWeight: FontWeight.w600,
@@ -1402,18 +2718,32 @@ class _ErrorBox extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.search_off, size: 40, color: Color(0xFF9CA3AF)),
-          SizedBox(height: 12),
-          Text('目前沒有符合條件的房源', style: TextStyle(fontWeight: FontWeight.w700)),
-        ],
+    return Center(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutBack,
+        builder: (context, value, child) {
+          return Opacity(
+            opacity: value.clamp(0.0, 1.0),
+            child: Transform.translate(
+              offset: Offset(0, 16 * (1 - value)),
+              child: Transform.scale(scale: 0.94 + value * 0.06, child: child),
+            ),
+          );
+        },
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off, size: 44, color: Color(0xFF9CA3AF)),
+            SizedBox(height: 12),
+            Text('目前沒有符合條件的房源', style: TextStyle(fontWeight: FontWeight.w700)),
+          ],
+        ),
       ),
     );
   }
@@ -1436,8 +2766,42 @@ class _EmptyDetail extends StatelessWidget {
   }
 }
 
+Future<void> _openHouseLink(BuildContext context, String link) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final opened = await openExternalUrl(link);
+  if (opened) return;
+
+  await _copyLink(messenger, link);
+}
+
+Future<void> _copyHouseLink(BuildContext context, String link) async {
+  final messenger = ScaffoldMessenger.of(context);
+  await _copyLink(messenger, link);
+}
+
+Future<void> _copyLink(ScaffoldMessengerState messenger, String link) async {
+  await Clipboard.setData(ClipboardData(text: link));
+  messenger.showSnackBar(const SnackBar(content: Text('已複製房源連結')));
+}
+
 String _readString(Map<String, dynamic> json, String key) {
   return json[key]?.toString() ?? '';
+}
+
+int? _readInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+String _formatMoney(int? value) {
+  if (value == null || value <= 0) return '-';
+  return '\$${value.toString()}';
+}
+
+String _shortDate(String value) {
+  if (value.length >= 10) return value.substring(5, 10).replaceAll('-', '/');
+  return value;
 }
 
 String _joinParts(List<String> parts) {

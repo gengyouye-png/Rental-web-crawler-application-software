@@ -67,19 +67,21 @@ def init_db():
 
 
 def save_to_db(rows):
-    """寫入整合後的房源資料；同一個連結只保留第一筆。"""
+    """用本次爬蟲結果覆蓋目前房源表，讓資料庫保持最新快照。"""
     if not rows:
         return 0
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    inserted_count = 0
+    saved_count = 0
 
     with get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("DELETE FROM houses")
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name = 'houses'")
 
         for row in rows:
             cursor.execute("""
-            INSERT OR IGNORE INTO houses (
+            INSERT INTO houses (
                 來源,
                 縣市,
                 地區,
@@ -111,6 +113,6 @@ def save_to_db(rows):
                 now,
             ))
 
-            inserted_count += cursor.rowcount
+            saved_count += cursor.rowcount
 
-    return inserted_count
+    return saved_count

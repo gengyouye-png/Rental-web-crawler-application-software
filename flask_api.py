@@ -3,8 +3,9 @@ import threading
 import traceback
 import uuid
 from datetime import datetime
+from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 from all_clawler.db import DB_PATH, init_db
 from all_clawler.main import run_all_crawlers
@@ -12,6 +13,7 @@ from all_clawler.main import run_all_crawlers
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 app.json.ensure_ascii = False
+WEB_BUILD_DIR = Path(__file__).resolve().parent / "rent_app" / "build" / "web"
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -28,6 +30,14 @@ def add_cors_headers(response):
 
 
 @app.route("/", methods=["GET"])
+def web_index():
+    if (WEB_BUILD_DIR / "index.html").exists():
+        return send_from_directory(WEB_BUILD_DIR, "index.html")
+
+    return api_index()
+
+
+@app.route("/api", methods=["GET"])
 def api_index():
     return jsonify({
         "ok": True,
@@ -158,6 +168,9 @@ def get_houses():
     district = (request.args.get("district") or "").strip()
     source = (request.args.get("source") or "").strip()
     keyword = (request.args.get("keyword") or "").strip()
+    kind = (request.args.get("kind") or request.args.get("kind_text") or "").strip()
+    min_price = _parse_optional_int(request.args.get("min_price"), minimum=0, maximum=1000000)
+    max_price = _parse_optional_int(request.args.get("max_price"), minimum=0, maximum=1000000)
     limit = _parse_int(request.args.get("limit"), default=100, minimum=1, maximum=500)
     offset = _parse_int(request.args.get("offset"), default=0, minimum=0, maximum=1000000)
 
@@ -168,6 +181,9 @@ def get_houses():
         district=district,
         source=source,
         keyword=keyword,
+        kind=kind,
+        min_price=min_price,
+        max_price=max_price,
     )
 
     sql = f"""
@@ -201,6 +217,9 @@ def get_houses():
             "district": district,
             "source": source,
             "keyword": keyword,
+            "kind": kind,
+            "min_price": min_price,
+            "max_price": max_price,
         },
     })
 
@@ -240,6 +259,84 @@ def get_house_stats():
     })
 
 
+@app.route("/api/houses/trends", methods=["GET"])
+def get_house_trends():
+    city = (request.args.get("city") or "").strip()
+    district = (request.args.get("district") or "").strip()
+    source = (request.args.get("source") or "").strip()
+    keyword = (request.args.get("keyword") or "").strip()
+    kind = (request.args.get("kind") or request.args.get("kind_text") or "").strip()
+    min_price = _parse_optional_int(request.args.get("min_price"), minimum=0, maximum=1000000)
+    max_price = _parse_optional_int(request.args.get("max_price"), minimum=0, maximum=1000000)
+    days = _parse_int(request.args.get("days"), default=30, minimum=1, maximum=365)
+
+    init_db()
+
+    where_sql, params = _build_house_filters(
+        city=city,
+        district=district,
+        source=source,
+        keyword=keyword,
+        kind=kind,
+        min_price=min_price,
+        max_price=max_price,
+    )
+
+    conditions = []
+    if where_sql:
+        conditions.append(where_sql[7:])
+
+    conditions.append("NULLIF(建立時間, '') IS NOT NULL")
+    conditions.append("date(建立時間) >= date('now', ?)")
+    params.append(f"-{days - 1} days")
+
+    trend_where_sql = " WHERE " + " AND ".join(conditions)
+
+    sql = f"""
+    SELECT
+        date(建立時間) AS date,
+        COUNT(*) AS count,
+        ROUND(AVG(CASE WHEN 租金數字 > 0 THEN 租金數字 END)) AS avg_price,
+        MIN(CASE WHEN 租金數字 > 0 THEN 租金數字 END) AS min_price,
+        MAX(CASE WHEN 租金數字 > 0 THEN 租金數字 END) AS max_price
+    FROM houses
+    {trend_where_sql}
+    GROUP BY date(建立時間)
+    ORDER BY date(建立時間) ASC
+    """
+
+    summary_sql = f"""
+    SELECT
+        COUNT(*) AS total,
+        ROUND(AVG(CASE WHEN 租金數字 > 0 THEN 租金數字 END)) AS avg_price,
+        MIN(CASE WHEN 租金數字 > 0 THEN 租金數字 END) AS min_price,
+        MAX(CASE WHEN 租金數字 > 0 THEN 租金數字 END) AS max_price
+    FROM houses
+    {trend_where_sql}
+    """
+
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(sql, params).fetchall()
+        summary = dict(conn.execute(summary_sql, params).fetchone())
+
+    return jsonify({
+        "ok": True,
+        "items": [dict(row) for row in rows],
+        "summary": summary,
+        "filters": {
+            "city": city,
+            "district": district,
+            "source": source,
+            "keyword": keyword,
+            "kind": kind,
+            "min_price": min_price,
+            "max_price": max_price,
+            "days": days,
+        },
+    })
+
+
 @app.route("/api/houses/<int:house_id>", methods=["GET"])
 def get_house_detail(house_id):
     init_db()
@@ -261,6 +358,28 @@ def get_house_detail(house_id):
         "ok": True,
         "item": dict(row),
     })
+
+
+@app.route("/<path:path>", methods=["GET"])
+def serve_web_asset(path):
+    if path.startswith("api/"):
+        return jsonify({
+            "ok": False,
+            "error": "api_not_found",
+        }), 404
+
+    requested = WEB_BUILD_DIR / path
+    if requested.exists() and requested.is_file():
+        return send_from_directory(WEB_BUILD_DIR, path)
+
+    if (WEB_BUILD_DIR / "index.html").exists():
+        return send_from_directory(WEB_BUILD_DIR, "index.html")
+
+    return jsonify({
+        "ok": False,
+        "error": "web_build_not_found",
+        "message": "Run `flutter build web --release` in rent_app first.",
+    }), 404
 
 
 def _build_crawl_config(payload):
@@ -296,7 +415,15 @@ def _build_crawl_config(payload):
     return config, errors
 
 
-def _build_house_filters(city="", district="", source="", keyword=""):
+def _build_house_filters(
+    city="",
+    district="",
+    source="",
+    keyword="",
+    kind="",
+    min_price=None,
+    max_price=None,
+):
     conditions = []
     params = []
 
@@ -311,6 +438,18 @@ def _build_house_filters(city="", district="", source="", keyword=""):
     if source:
         conditions.append("來源 = ?")
         params.append(source)
+
+    if kind:
+        conditions.append("房型 LIKE ?")
+        params.append(f"%{kind}%")
+
+    if min_price is not None:
+        conditions.append("租金數字 >= ?")
+        params.append(min_price)
+
+    if max_price is not None:
+        conditions.append("租金數字 <= ?")
+        params.append(max_price)
 
     if keyword:
         conditions.append("(標題 LIKE ? OR 地址 LIKE ? OR 房型 LIKE ?)")
@@ -431,6 +570,18 @@ def _parse_int(value, default, minimum, maximum):
         number = int(value)
     except (TypeError, ValueError):
         number = default
+
+    return max(minimum, min(number, maximum))
+
+
+def _parse_optional_int(value, minimum, maximum):
+    if value is None or str(value).strip() == "":
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
 
     return max(minimum, min(number, maximum))
 
