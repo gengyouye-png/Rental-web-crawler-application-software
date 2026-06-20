@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'map_embed_stub.dart' if (dart.library.html) 'map_embed_web.dart';
 import 'url_opener_stub.dart' if (dart.library.html) 'url_opener_web.dart';
 
 void main() {
@@ -276,6 +277,8 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   bool _startingCrawl = false;
   bool _checkingHealth = false;
   String _connectionMode = _defaultConnectionMode;
+  String _sortMode = 'newest';
+  String _viewMode = 'cards';
   String? _error;
   String? _healthText;
   String? _searchStatusText;
@@ -286,9 +289,11 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   CrawlJob? _job;
   HouseStats? _stats;
   TrendData? _trends;
+  PriceDistribution? _priceDistribution;
+  Set<String> _favoriteKeys = {};
   int _total = 0;
   int _offset = 0;
-  final int _limit = 10;
+  final int _limit = 20;
 
   String get _apiBase =>
       _apiBaseController.text.trim().replaceAll(RegExp(r'/+$'), '');
@@ -315,6 +320,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
 
   Future<void> _bootstrap() async {
     await _loadConnectionSettings();
+    await _loadFavoriteKeys();
     await _loadInitialData();
   }
 
@@ -325,6 +331,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     await Future.wait([
       _fetchStats(),
       _fetchTrends(),
+      _fetchPriceDistribution(),
       _fetchHouses(reset: true),
       _fetchLatestJob(),
     ]);
@@ -352,6 +359,18 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('connectionMode', _connectionMode);
     await prefs.setString('apiBase', _apiBase);
+  }
+
+  Future<void> _loadFavoriteKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _favoriteKeys = (prefs.getStringList('favoriteHouseKeys') ?? []).toSet();
+    });
+  }
+
+  Future<void> _saveFavoriteKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('favoriteHouseKeys', _favoriteKeys.toList());
   }
 
   Future<void> _useWebMode() async {
@@ -469,6 +488,30 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     }
   }
 
+  Future<void> _fetchPriceDistribution() async {
+    final query = {
+      if (_cityController.text.trim().isNotEmpty)
+        'city': _cityController.text.trim(),
+      if (_districtController.text.trim().isNotEmpty)
+        'district': _districtController.text.trim(),
+      if (_kindController.text.trim().isNotEmpty)
+        'kind': _kindController.text.trim(),
+      if (_minPriceController.text.trim().isNotEmpty)
+        'min_price': _minPriceController.text.trim(),
+      if (_maxPriceController.text.trim().isNotEmpty)
+        'max_price': _maxPriceController.text.trim(),
+      if (_keywordController.text.trim().isNotEmpty)
+        'keyword': _keywordController.text.trim(),
+    };
+
+    try {
+      final data = await _getJson('/api/houses/price-distribution', query);
+      setState(() => _priceDistribution = PriceDistribution.fromJson(data));
+    } catch (error) {
+      setState(() => _error = error.toString());
+    }
+  }
+
   Future<void> _fetchHouses({bool reset = false}) async {
     if (_loadingHouses) return;
 
@@ -476,6 +519,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     final query = {
       'limit': _limit.toString(),
       'offset': nextOffset.toString(),
+      'sort': _sortMode,
       if (_cityController.text.trim().isNotEmpty)
         'city': _cityController.text.trim(),
       if (_districtController.text.trim().isNotEmpty)
@@ -536,6 +580,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
       await Future.wait([
         _fetchStats(),
         _fetchTrends(),
+        _fetchPriceDistribution(),
         _fetchHouses(reset: true),
       ]);
     } finally {
@@ -558,6 +603,27 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     _maxPriceController.clear();
     _keywordController.clear();
     await _searchHouses();
+  }
+
+  Future<void> _changeSortMode(String sortMode) async {
+    if (_sortMode == sortMode) return;
+
+    setState(() => _sortMode = sortMode);
+    await _searchHouses();
+  }
+
+  Future<void> _toggleFavorite(House house) async {
+    final key = house.favoriteKey;
+    if (key.isEmpty) return;
+
+    setState(() {
+      if (_favoriteKeys.contains(key)) {
+        _favoriteKeys.remove(key);
+      } else {
+        _favoriteKeys.add(key);
+      }
+    });
+    await _saveFavoriteKeys();
   }
 
   void _goToPreviousPage() {
@@ -629,6 +695,7 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
           await Future.wait([
             _fetchStats(),
             _fetchTrends(),
+            _fetchPriceDistribution(),
             _fetchHouses(reset: true),
           ]);
         }
@@ -727,12 +794,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                 const SizedBox(height: 16),
                 SizedBox(height: 320, child: _buildTrendPanel()),
                 const SizedBox(height: 16),
+                SizedBox(height: 320, child: _buildPriceDistributionPanel()),
+                const SizedBox(height: 16),
                 SizedBox(height: 780, child: _buildHouseList()),
                 const SizedBox(height: 16),
-                SizedBox(
-                  height: 520,
-                  child: _HouseDetailPanel(house: _selectedHouse),
-                ),
+                SizedBox(height: 420, child: _buildMapPanel()),
+                const SizedBox(height: 16),
+                SizedBox(height: 520, child: _buildHouseDetailPanel()),
                 const SizedBox(height: 24),
               ],
             ),
@@ -752,11 +820,30 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
         const SizedBox(height: 12),
         SizedBox(height: 300, child: _buildTrendPanel()),
         const SizedBox(height: 12),
+        SizedBox(height: 360, child: _buildPriceDistributionPanel()),
+        const SizedBox(height: 12),
         SizedBox(height: 700, child: _buildHouseList()),
         const SizedBox(height: 12),
-        SizedBox(height: 520, child: _HouseDetailPanel(house: _selectedHouse)),
+        SizedBox(height: 380, child: _buildMapPanel()),
+        const SizedBox(height: 12),
+        SizedBox(height: 520, child: _buildHouseDetailPanel()),
       ],
     );
+  }
+
+  Widget _buildHouseDetailPanel() {
+    final house = _selectedHouse;
+    return _HouseDetailPanel(
+      house: house,
+      favorite: house == null
+          ? false
+          : _favoriteKeys.contains(house.favoriteKey),
+      onToggleFavorite: house == null ? null : () => _toggleFavorite(house),
+    );
+  }
+
+  Widget _buildMapPanel() {
+    return _HouseMapPanel(house: _selectedHouse);
   }
 
   Widget _buildSearchPanel() {
@@ -862,6 +949,13 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
               ),
               textInputAction: TextInputAction.search,
               onSubmitted: (_) => _searchHouses(),
+            ),
+            const SizedBox(height: 12),
+            _SortModeSelector(
+              value: _sortMode,
+              onChanged: _loadingHouses || _loadingTrends
+                  ? null
+                  : _changeSortMode,
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
@@ -1155,6 +1249,10 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     );
   }
 
+  Widget _buildPriceDistributionPanel() {
+    return _PriceDistributionPanel(distribution: _priceDistribution);
+  }
+
   Widget _buildHouseList() {
     final start = _total == 0 ? 0 : _offset + 1;
     final end = (_offset + _houses.length).clamp(0, _total);
@@ -1183,6 +1281,11 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                     ),
                   ),
                 ),
+                _ViewModeToggle(
+                  value: _viewMode,
+                  onChanged: (value) => setState(() => _viewMode = value),
+                ),
+                const SizedBox(width: 10),
                 _StatusPill(label: '$_total 筆', color: const Color(0xFF0F766E)),
               ],
             ),
@@ -1220,6 +1323,16 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                   ? const _HouseListSkeleton(key: ValueKey('house-loading'))
                   : _houses.isEmpty
                   ? const _EmptyState(key: ValueKey('house-empty'))
+                  : _viewMode == 'table'
+                  ? _HouseDataTable(
+                      key: ValueKey('house-table-$_offset-${_houses.length}'),
+                      houses: _houses,
+                      selectedHouse: _selectedHouse,
+                      favoriteKeys: _favoriteKeys,
+                      onSelect: (house) =>
+                          setState(() => _selectedHouse = house),
+                      onToggleFavorite: _toggleFavorite,
+                    )
                   : ListView.separated(
                       key: ValueKey('house-list-$_offset-${_houses.length}'),
                       itemCount: _houses.length,
@@ -1231,8 +1344,10 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
                           index: index,
                           child: _HouseListTile(
                             house: house,
+                            favorite: _favoriteKeys.contains(house.favoriteKey),
                             selected: house.id == _selectedHouse?.id,
                             onTap: () => setState(() => _selectedHouse = house),
+                            onToggleFavorite: () => _toggleFavorite(house),
                           ),
                         );
                       },
@@ -1300,6 +1415,8 @@ class House {
   final String floor;
   final String link;
   final String createdAt;
+
+  String get favoriteKey => link.isNotEmpty ? link : 'house:$id';
 
   factory House.fromJson(Map<String, dynamic> json) {
     return House(
@@ -1473,6 +1590,36 @@ class TrendSummary {
       avgPrice: _readInt(json?['avg_price']),
       minPrice: _readInt(json?['min_price']),
       maxPrice: _readInt(json?['max_price']),
+    );
+  }
+}
+
+class PriceDistribution {
+  PriceDistribution({required this.total, required this.items});
+
+  final int total;
+  final List<PriceDistributionItem> items;
+
+  factory PriceDistribution.fromJson(Map<String, dynamic> json) {
+    final items = (json['items'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(PriceDistributionItem.fromJson)
+        .toList();
+
+    return PriceDistribution(total: _readInt(json['total']) ?? 0, items: items);
+  }
+}
+
+class PriceDistributionItem {
+  PriceDistributionItem({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  factory PriceDistributionItem.fromJson(Map<String, dynamic> json) {
+    return PriceDistributionItem(
+      label: json['label']?.toString() ?? '未分類',
+      count: _readInt(json['count']) ?? 0,
     );
   }
 }
@@ -1693,6 +1840,95 @@ class _SearchProgressNotice extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _SortModeSelector extends StatelessWidget {
+  const _SortModeSelector({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.sort, size: 18, color: Color(0xFF0F766E)),
+              SizedBox(width: 8),
+              Text('排序', style: TextStyle(fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<String>(
+            selected: {value},
+            segments: const [
+              ButtonSegment(
+                value: 'newest',
+                icon: Icon(Icons.schedule),
+                label: Text('最新'),
+              ),
+              ButtonSegment(
+                value: 'price_asc',
+                icon: Icon(Icons.arrow_downward),
+                label: Text('低租金'),
+              ),
+              ButtonSegment(
+                value: 'price_desc',
+                icon: Icon(Icons.arrow_upward),
+                label: Text('高租金'),
+              ),
+            ],
+            onSelectionChanged: onChanged == null
+                ? null
+                : (selected) => onChanged!(selected.first),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewModeToggle extends StatelessWidget {
+  const _ViewModeToggle({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<String>(
+      showSelectedIcon: false,
+      selected: {value},
+      style: ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        padding: WidgetStateProperty.all(
+          const EdgeInsets.symmetric(horizontal: 10),
+        ),
+      ),
+      segments: const [
+        ButtonSegment(
+          value: 'cards',
+          icon: Icon(Icons.view_agenda_outlined, size: 18),
+          label: Text('卡片'),
+        ),
+        ButtonSegment(
+          value: 'table',
+          icon: Icon(Icons.table_rows_outlined, size: 18),
+          label: Text('表格'),
+        ),
+      ],
+      onSelectionChanged: (selected) => onChanged(selected.first),
     );
   }
 }
@@ -2239,16 +2475,590 @@ class _EmptyTrendState extends StatelessWidget {
   }
 }
 
+class _PriceDistributionPanel extends StatelessWidget {
+  const _PriceDistributionPanel({required this.distribution});
+
+  static const _colors = [
+    Color(0xFF0F766E),
+    Color(0xFF2563EB),
+    Color(0xFFE11D48),
+    Color(0xFFD97706),
+    Color(0xFF7C3AED),
+    Color(0xFF6B7280),
+  ];
+
+  final PriceDistribution? distribution;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = distribution;
+    final items =
+        data?.items.where((item) => item.count > 0).toList() ??
+        const <PriceDistributionItem>[];
+    final total = data?.total ?? 0;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.pie_chart_outline, color: Color(0xFF0F766E)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '租金分布',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '依目前搜尋條件統計租金區間比例',
+                        style: TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _StatusPill(label: '$total 筆', color: const Color(0xFF0F766E)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: items.isEmpty
+                  ? const _EmptyPieState()
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 680;
+                        final chart = _PieChart(
+                          items: items,
+                          total: total,
+                          colors: _colors,
+                        );
+                        final legend = _PieLegend(
+                          items: items,
+                          total: total,
+                          colors: _colors,
+                        );
+
+                        if (compact) {
+                          return Column(
+                            children: [
+                              Expanded(child: chart),
+                              const SizedBox(height: 8),
+                              SizedBox(height: 86, child: legend),
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(flex: 4, child: chart),
+                            const SizedBox(width: 18),
+                            Expanded(flex: 5, child: legend),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PieChart extends StatelessWidget {
+  const _PieChart({
+    required this.items,
+    required this.total,
+    required this.colors,
+  });
+
+  final List<PriceDistributionItem> items;
+  final int total;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _PieChartPainter(items: items, total: total, colors: colors),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$total',
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF111827),
+              ),
+            ),
+            const Text(
+              '房源',
+              style: TextStyle(
+                color: Color(0xFF6B7280),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PieChartPainter extends CustomPainter {
+  _PieChartPainter({
+    required this.items,
+    required this.total,
+    required this.colors,
+  });
+
+  final List<PriceDistributionItem> items;
+  final int total;
+  final List<Color> colors;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final side = math.min(size.width, size.height);
+    final rect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: side * 0.86,
+      height: side * 0.86,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = side * 0.16
+      ..strokeCap = StrokeCap.butt;
+    var start = -math.pi / 2;
+
+    for (var i = 0; i < items.length; i++) {
+      final sweep = total == 0 ? 0.0 : (items[i].count / total) * math.pi * 2;
+      paint.color = colors[i % colors.length];
+      canvas.drawArc(rect, start, sweep, false, paint);
+      start += sweep;
+    }
+
+    final innerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(rect.center, side * 0.28, innerPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PieChartPainter oldDelegate) {
+    return oldDelegate.items != items || oldDelegate.total != total;
+  }
+}
+
+class _PieLegend extends StatelessWidget {
+  const _PieLegend({
+    required this.items,
+    required this.total,
+    required this.colors,
+  });
+
+  final List<PriceDistributionItem> items;
+  final int total;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      itemCount: items.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final percent = total == 0 ? 0 : (item.count / total * 100).round();
+        final color = colors[index % colors.length];
+
+        return Row(
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                item.label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '${item.count} 筆',
+              style: const TextStyle(
+                color: Color(0xFF374151),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 46,
+              child: Text(
+                '$percent%',
+                textAlign: TextAlign.right,
+                style: TextStyle(color: color, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _EmptyPieState extends StatelessWidget {
+  const _EmptyPieState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.pie_chart_outline, size: 40, color: Color(0xFF9CA3AF)),
+          SizedBox(height: 12),
+          Text('目前沒有可統計的租金資料', style: TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class _HouseMapPanel extends StatelessWidget {
+  const _HouseMapPanel({required this.house});
+
+  final House? house;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = house;
+    final query = selected == null
+        ? ''
+        : _joinParts([
+            selected.city,
+            selected.district,
+            selected.address,
+            selected.title,
+          ]);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.map_outlined, color: Color(0xFF0F766E)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '地圖定位',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        selected == null
+                            ? '選取列表中的房源後同步定位'
+                            : _joinParts([selected.district, selected.address]),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: selected == null || query.isEmpty
+                      ? null
+                      : () => _openHouseMap(context, query),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('開啟地圖'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: selected == null || query.isEmpty
+                      ? const _EmptyMapState()
+                      : Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            MapEmbedView(key: ValueKey(query), query: query),
+                            IgnorePointer(
+                              child: Center(
+                                child: _MapPriceMarker(
+                                  price: selected.price.isEmpty
+                                      ? '租金'
+                                      : selected.price,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPriceMarker extends StatelessWidget {
+  const _MapPriceMarker({required this.price});
+
+  final String price;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(0, -18 * (1 - value)),
+          child: Transform.scale(
+            scale: 0.9 + value * 0.1,
+            child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
+          ),
+        );
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE11D48),
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Text(
+              price,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          CustomPaint(
+            size: const Size(18, 10),
+            painter: _MapMarkerTipPainter(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapMarkerTipPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..lineTo(size.width, 0)
+      ..close();
+    canvas.drawPath(path, Paint()..color = const Color(0xFFE11D48));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _EmptyMapState extends StatelessWidget {
+  const _EmptyMapState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.add_location_alt_outlined,
+            size: 42,
+            color: Color(0xFF9CA3AF),
+          ),
+          SizedBox(height: 12),
+          Text('點選房源後，地圖會同步定位', style: TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class _HouseDataTable extends StatelessWidget {
+  const _HouseDataTable({
+    super.key,
+    required this.houses,
+    required this.selectedHouse,
+    required this.favoriteKeys,
+    required this.onSelect,
+    required this.onToggleFavorite,
+  });
+
+  final List<House> houses;
+  final House? selectedHouse;
+  final Set<String> favoriteKeys;
+  final ValueChanged<House> onSelect;
+  final ValueChanged<House> onToggleFavorite;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scrollbar(
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: 1220,
+          child: SingleChildScrollView(
+            child: DataTable(
+              showCheckboxColumn: false,
+              headingRowColor: WidgetStateProperty.all(const Color(0xFFF9FAFB)),
+              dataRowMinHeight: 62,
+              dataRowMaxHeight: 78,
+              columnSpacing: 22,
+              columns: const [
+                DataColumn(label: Text('收藏')),
+                DataColumn(label: Text('來源')),
+                DataColumn(label: Text('標題')),
+                DataColumn(label: Text('租金')),
+                DataColumn(label: Text('地區')),
+                DataColumn(label: Text('坪數')),
+                DataColumn(label: Text('房型')),
+                DataColumn(label: Text('樓層')),
+                DataColumn(label: Text('操作')),
+              ],
+              rows: houses.map((house) {
+                final selected = selectedHouse?.id == house.id;
+                final favorite = favoriteKeys.contains(house.favoriteKey);
+
+                return DataRow(
+                  selected: selected,
+                  color: WidgetStateProperty.resolveWith((states) {
+                    if (selected) return const Color(0xFFE6F4F1);
+                    return null;
+                  }),
+                  onSelectChanged: (_) => onSelect(house),
+                  cells: [
+                    DataCell(
+                      IconButton(
+                        tooltip: favorite ? '取消收藏' : '收藏房源',
+                        onPressed: () => onToggleFavorite(house),
+                        icon: Icon(
+                          favorite ? Icons.star : Icons.star_border,
+                          color: favorite
+                              ? const Color(0xFFE11D48)
+                              : const Color(0xFF6B7280),
+                        ),
+                      ),
+                    ),
+                    DataCell(_SourceBadge(source: house.source)),
+                    DataCell(
+                      SizedBox(
+                        width: 300,
+                        child: Text(
+                          house.title.isEmpty ? '未命名房源' : house.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        house.price.isEmpty ? '-' : house.price,
+                        style: const TextStyle(
+                          color: Color(0xFFE11D48),
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(house.district.isEmpty ? '-' : house.district),
+                    ),
+                    DataCell(Text(house.area.isEmpty ? '-' : house.area)),
+                    DataCell(
+                      Text(house.roomType.isEmpty ? '-' : house.roomType),
+                    ),
+                    DataCell(Text(house.floor.isEmpty ? '-' : house.floor)),
+                    DataCell(
+                      FilledButton.tonalIcon(
+                        onPressed: house.link.isEmpty
+                            ? null
+                            : () => _openHouseLink(context, house.link),
+                        icon: const Icon(Icons.open_in_new, size: 17),
+                        label: const Text('查看'),
+                      ),
+                    ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _HouseListTile extends StatelessWidget {
   const _HouseListTile({
     required this.house,
+    required this.favorite,
     required this.selected,
     required this.onTap,
+    required this.onToggleFavorite,
   });
 
   final House house;
+  final bool favorite;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -2305,6 +3115,11 @@ class _HouseListTile extends StatelessWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
+                      _FavoriteButton(
+                        favorite: favorite,
+                        onPressed: onToggleFavorite,
+                      ),
+                      const SizedBox(height: 8),
                       Text(
                         house.price.isEmpty ? '-' : house.price,
                         style: const TextStyle(
@@ -2407,10 +3222,40 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
+class _FavoriteButton extends StatelessWidget {
+  const _FavoriteButton({required this.favorite, required this.onPressed});
+
+  final bool favorite;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = favorite ? const Color(0xFFE11D48) : const Color(0xFF6B7280);
+
+    return IconButton.filledTonal(
+      tooltip: favorite ? '取消收藏' : '收藏房源',
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: favorite
+            ? const Color(0xFFFCE7F3)
+            : const Color(0xFFF3F4F6),
+        foregroundColor: color,
+      ),
+      icon: Icon(favorite ? Icons.star : Icons.star_border),
+    );
+  }
+}
+
 class _HouseDetailPanel extends StatelessWidget {
-  const _HouseDetailPanel({required this.house});
+  const _HouseDetailPanel({
+    required this.house,
+    required this.favorite,
+    required this.onToggleFavorite,
+  });
 
   final House? house;
+  final bool favorite;
+  final VoidCallback? onToggleFavorite;
 
   @override
   Widget build(BuildContext context) {
@@ -2438,6 +3283,11 @@ class _HouseDetailPanel extends StatelessWidget {
                     children: [
                       _SourceBadge(source: selected.source),
                       const Spacer(),
+                      _FavoriteButton(
+                        favorite: favorite,
+                        onPressed: onToggleFavorite,
+                      ),
+                      const SizedBox(width: 8),
                       Text(
                         '#${selected.id}',
                         style: const TextStyle(color: Color(0xFF6B7280)),
@@ -2772,6 +3622,16 @@ Future<void> _openHouseLink(BuildContext context, String link) async {
   if (opened) return;
 
   await _copyLink(messenger, link);
+}
+
+Future<void> _openHouseMap(BuildContext context, String query) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final url =
+      'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(query)}';
+  final opened = await openExternalUrl(url);
+  if (opened) return;
+
+  await _copyLink(messenger, url);
 }
 
 Future<void> _copyHouseLink(BuildContext context, String link) async {

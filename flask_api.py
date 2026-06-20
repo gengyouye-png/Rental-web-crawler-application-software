@@ -171,6 +171,7 @@ def get_houses():
     kind = (request.args.get("kind") or request.args.get("kind_text") or "").strip()
     min_price = _parse_optional_int(request.args.get("min_price"), minimum=0, maximum=1000000)
     max_price = _parse_optional_int(request.args.get("max_price"), minimum=0, maximum=1000000)
+    sort = (request.args.get("sort") or "newest").strip()
     limit = _parse_int(request.args.get("limit"), default=100, minimum=1, maximum=500)
     offset = _parse_int(request.args.get("offset"), default=0, minimum=0, maximum=1000000)
 
@@ -185,12 +186,13 @@ def get_houses():
         min_price=min_price,
         max_price=max_price,
     )
+    order_sql = _build_house_order(sort)
 
     sql = f"""
     SELECT *
     FROM houses
     {where_sql}
-    ORDER BY id DESC
+    ORDER BY {order_sql}
     LIMIT ? OFFSET ?
     """
     page_params = params + [limit, offset]
@@ -220,6 +222,7 @@ def get_houses():
             "kind": kind,
             "min_price": min_price,
             "max_price": max_price,
+            "sort": sort,
         },
     })
 
@@ -333,6 +336,76 @@ def get_house_trends():
             "min_price": min_price,
             "max_price": max_price,
             "days": days,
+        },
+    })
+
+
+@app.route("/api/houses/price-distribution", methods=["GET"])
+def get_price_distribution():
+    city = (request.args.get("city") or "").strip()
+    district = (request.args.get("district") or "").strip()
+    source = (request.args.get("source") or "").strip()
+    keyword = (request.args.get("keyword") or "").strip()
+    kind = (request.args.get("kind") or request.args.get("kind_text") or "").strip()
+    min_price = _parse_optional_int(request.args.get("min_price"), minimum=0, maximum=1000000)
+    max_price = _parse_optional_int(request.args.get("max_price"), minimum=0, maximum=1000000)
+
+    init_db()
+
+    where_sql, params = _build_house_filters(
+        city=city,
+        district=district,
+        source=source,
+        keyword=keyword,
+        kind=kind,
+        min_price=min_price,
+        max_price=max_price,
+    )
+
+    sql = f"""
+    SELECT
+        CASE
+            WHEN 租金數字 IS NULL OR 租金數字 <= 0 THEN '未標示'
+            WHEN 租金數字 < 5000 THEN '5000 以下'
+            WHEN 租金數字 < 8000 THEN '5000-7999'
+            WHEN 租金數字 < 12000 THEN '8000-11999'
+            WHEN 租金數字 < 18000 THEN '12000-17999'
+            ELSE '18000 以上'
+        END AS label,
+        COUNT(*) AS count
+    FROM houses
+    {where_sql}
+    GROUP BY label
+    """
+
+    order_map = {
+        "未標示": 0,
+        "5000 以下": 1,
+        "5000-7999": 2,
+        "8000-11999": 3,
+        "12000-17999": 4,
+        "18000 以上": 5,
+    }
+
+    with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    rows.sort(key=lambda item: order_map.get(item["label"], 99))
+    total = sum(row["count"] for row in rows)
+
+    return jsonify({
+        "ok": True,
+        "total": total,
+        "items": rows,
+        "filters": {
+            "city": city,
+            "district": district,
+            "source": source,
+            "keyword": keyword,
+            "kind": kind,
+            "min_price": min_price,
+            "max_price": max_price,
         },
     })
 
@@ -459,6 +532,16 @@ def _build_house_filters(
         return "", params
 
     return " WHERE " + " AND ".join(conditions), params
+
+
+def _build_house_order(sort):
+    allowed = {
+        "newest": "id DESC",
+        "price_asc": "CASE WHEN 租金數字 IS NULL OR 租金數字 <= 0 THEN 1 ELSE 0 END ASC, 租金數字 ASC, id DESC",
+        "price_desc": "CASE WHEN 租金數字 IS NULL OR 租金數字 <= 0 THEN 1 ELSE 0 END ASC, 租金數字 DESC, id DESC",
+        "oldest": "id ASC",
+    }
+    return allowed.get(sort, allowed["newest"])
 
 
 def _run_crawl_job(job_id, config):
