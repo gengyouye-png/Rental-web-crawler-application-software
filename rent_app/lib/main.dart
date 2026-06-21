@@ -2,16 +2,403 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'firebase_options.dart';
 import 'map_embed_stub.dart' if (dart.library.html) 'map_embed_web.dart';
 import 'url_opener_stub.dart' if (dart.library.html) 'url_opener_web.dart';
 
+bool _firebaseReady = false;
+
+const Map<String, List<String>> _taiwanDistrictOptions = {
+  '台北': [
+    '中正區',
+    '大同區',
+    '中山區',
+    '松山區',
+    '大安區',
+    '萬華區',
+    '信義區',
+    '士林區',
+    '北投區',
+    '內湖區',
+    '南港區',
+    '文山區',
+  ],
+  '基隆': ['仁愛區', '信義區', '中正區', '中山區', '安樂區', '暖暖區', '七堵區'],
+  '新北': [
+    '萬里區',
+    '金山區',
+    '板橋區',
+    '汐止區',
+    '深坑區',
+    '石碇區',
+    '瑞芳區',
+    '平溪區',
+    '雙溪區',
+    '貢寮區',
+    '新店區',
+    '坪林區',
+    '烏來區',
+    '永和區',
+    '中和區',
+    '土城區',
+    '三峽區',
+    '樹林區',
+    '鶯歌區',
+    '三重區',
+    '新莊區',
+    '泰山區',
+    '林口區',
+    '蘆洲區',
+    '五股區',
+    '八里區',
+    '淡水區',
+    '三芝區',
+    '石門區',
+  ],
+  '新竹市': ['東區', '北區', '香山區'],
+  '新竹縣': [
+    '竹北市',
+    '湖口鄉',
+    '新豐鄉',
+    '新埔鎮',
+    '關西鎮',
+    '芎林鄉',
+    '寶山鄉',
+    '竹東鎮',
+    '五峰鄉',
+    '橫山鄉',
+    '尖石鄉',
+    '北埔鄉',
+    '峨嵋鄉',
+  ],
+  '桃園': [
+    '中壢區',
+    '平鎮區',
+    '龍潭區',
+    '楊梅區',
+    '新屋區',
+    '觀音區',
+    '桃園區',
+    '龜山區',
+    '八德區',
+    '大溪區',
+    '復興區',
+    '大園區',
+    '蘆竹區',
+  ],
+  '苗栗': [
+    '竹南鎮',
+    '頭份市',
+    '三灣鄉',
+    '南庄鄉',
+    '獅潭鄉',
+    '後龍鎮',
+    '通霄鎮',
+    '苑裡鎮',
+    '苗栗市',
+    '造橋鄉',
+    '頭屋鄉',
+    '公館鄉',
+    '大湖鄉',
+    '泰安鄉',
+    '銅鑼鄉',
+    '三義鄉',
+    '西湖鄉',
+    '卓蘭鎮',
+  ],
+  '台中': [
+    '中區',
+    '東區',
+    '南區',
+    '西區',
+    '北區',
+    '北屯區',
+    '西屯區',
+    '南屯區',
+    '太平區',
+    '大里區',
+    '霧峰區',
+    '烏日區',
+    '豐原區',
+    '后里區',
+    '石岡區',
+    '東勢區',
+    '和平區',
+    '新社區',
+    '潭子區',
+    '大雅區',
+    '神岡區',
+    '大肚區',
+    '沙鹿區',
+    '龍井區',
+    '梧棲區',
+    '清水區',
+    '大甲區',
+    '外埔區',
+    '大安區',
+  ],
+  '彰化': [
+    '彰化市',
+    '芬園鄉',
+    '花壇鄉',
+    '秀水鄉',
+    '鹿港鎮',
+    '福興鄉',
+    '線西鄉',
+    '和美鎮',
+    '伸港鄉',
+    '員林市',
+    '社頭鄉',
+    '永靖鄉',
+    '埔心鄉',
+    '溪湖鎮',
+    '大村鄉',
+    '埔鹽鄉',
+    '田中鎮',
+    '北斗鎮',
+    '田尾鄉',
+    '埤頭鄉',
+    '溪州鄉',
+    '竹塘鄉',
+    '二林鎮',
+    '大城鄉',
+    '芳苑鄉',
+    '二水鄉',
+  ],
+  '南投': [
+    '南投市',
+    '中寮鄉',
+    '草屯鎮',
+    '國姓鄉',
+    '埔里鎮',
+    '仁愛鄉',
+    '名間鄉',
+    '集集鎮',
+    '水里鄉',
+    '魚池鄉',
+    '信義鄉',
+    '竹山鎮',
+    '鹿谷鄉',
+  ],
+  '嘉義市': ['西區', '東區'],
+  '嘉義縣': [
+    '番路鄉',
+    '梅山鄉',
+    '竹崎鄉',
+    '阿里山鄉',
+    '中埔鄉',
+    '大埔鄉',
+    '水上鄉',
+    '鹿草鄉',
+    '太保市',
+    '朴子市',
+    '東石鄉',
+    '六腳鄉',
+    '新港鄉',
+    '民雄鄉',
+    '大林鎮',
+    '溪口鄉',
+    '義竹鄉',
+    '布袋鎮',
+  ],
+  '雲林': [
+    '斗南鎮',
+    '大埤鄉',
+    '虎尾鎮',
+    '土庫鎮',
+    '褒忠鄉',
+    '東勢鄉',
+    '臺西鄉',
+    '崙背鄉',
+    '麥寮鄉',
+    '斗六市',
+    '林內鄉',
+    '古坑鄉',
+    '莿桐鄉',
+    '西螺鎮',
+    '二崙鄉',
+    '北港鎮',
+    '水林鄉',
+    '口湖鄉',
+    '四湖鄉',
+    '元長鄉',
+  ],
+  '台南': [
+    '東區',
+    '南區',
+    '中西區',
+    '北區',
+    '安平區',
+    '安南區',
+    '永康區',
+    '歸仁區',
+    '新化區',
+    '左鎮區',
+    '玉井區',
+    '楠西區',
+    '南化區',
+    '仁德區',
+    '關廟區',
+    '龍崎區',
+    '官田區',
+    '麻豆區',
+    '佳里區',
+    '西港區',
+    '七股區',
+    '將軍區',
+    '學甲區',
+    '北門區',
+    '新營區',
+    '後壁區',
+    '白河區',
+    '東山區',
+    '六甲區',
+    '下營區',
+    '柳營區',
+    '鹽水區',
+    '善化區',
+    '大內區',
+    '山上區',
+    '新市區',
+    '安定區',
+  ],
+  '高雄': [
+    '新興區',
+    '前金區',
+    '苓雅區',
+    '鹽埕區',
+    '鼓山區',
+    '旗津區',
+    '前鎮區',
+    '三民區',
+    '楠梓區',
+    '小港區',
+    '左營區',
+    '仁武區',
+    '大社區',
+    '岡山區',
+    '路竹區',
+    '阿蓮區',
+    '田寮區',
+    '燕巢區',
+    '橋頭區',
+    '梓官區',
+    '彌陀區',
+    '永安區',
+    '湖內區',
+    '鳳山區',
+    '大寮區',
+    '林園區',
+    '鳥松區',
+    '大樹區',
+    '旗山區',
+    '美濃區',
+    '六龜區',
+    '內門區',
+    '杉林區',
+    '甲仙區',
+    '桃源區',
+    '那瑪夏區',
+    '茂林區',
+    '茄萣區',
+  ],
+  '屏東': [
+    '屏東市',
+    '三地門鄉',
+    '霧臺鄉',
+    '瑪家鄉',
+    '九如鄉',
+    '里港鄉',
+    '高樹鄉',
+    '鹽埔鄉',
+    '長治鄉',
+    '麟洛鄉',
+    '竹田鄉',
+    '內埔鄉',
+    '萬丹鄉',
+    '潮州鎮',
+    '泰武鄉',
+    '來義鄉',
+    '萬巒鄉',
+    '崁頂鄉',
+    '新埤鄉',
+    '南州鄉',
+    '林邊鄉',
+    '東港鎮',
+    '琉球鄉',
+    '佳冬鄉',
+    '新園鄉',
+    '枋寮鄉',
+    '枋山鄉',
+    '春日鄉',
+    '獅子鄉',
+    '牡丹鄉',
+    '恆春鎮',
+    '滿州鄉',
+  ],
+  '宜蘭': [
+    '宜蘭市',
+    '頭城鎮',
+    '礁溪鄉',
+    '壯圍鄉',
+    '員山鄉',
+    '羅東鎮',
+    '三星鄉',
+    '大同鄉',
+    '五結鄉',
+    '冬山鄉',
+    '蘇澳鎮',
+    '南澳鄉',
+  ],
+  '台東': [
+    '台東市',
+    '綠島鄉',
+    '蘭嶼鄉',
+    '延平鄉',
+    '卑南鄉',
+    '鹿野鄉',
+    '關山鎮',
+    '海端鄉',
+    '池上鄉',
+    '東河鄉',
+    '成功鎮',
+    '長濱鄉',
+    '太麻里鄉',
+    '金峰鄉',
+    '大武鄉',
+    '達仁鄉',
+  ],
+  '花蓮': [
+    '花蓮市',
+    '新城鄉',
+    '秀林鄉',
+    '吉安鄉',
+    '壽豐鄉',
+    '鳳林鎮',
+    '光復鄉',
+    '豐濱鄉',
+    '瑞穗鄉',
+    '萬榮鄉',
+    '玉里鎮',
+    '卓溪鄉',
+    '富里鄉',
+  ],
+  '澎湖': ['馬公市', '西嶼鄉', '望安鄉', '七美鄉', '白沙鄉', '湖西鄉'],
+  '金門': ['金沙鎮', '金湖鎮', '金寧鄉', '金城鎮', '烈嶼鄉', '烏坵鄉'],
+  '連江': ['南竿鄉', '北竿鄉', '莒光鄉', '東引鄉'],
+};
+
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const RentCrawlerApp());
 }
 
@@ -283,6 +670,8 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   String? _healthText;
   String? _searchStatusText;
   Timer? _jobTimer;
+  StreamSubscription<User?>? _authSubscription;
+  User? _currentUser;
 
   List<House> _houses = [];
   House? _selectedHouse;
@@ -298,15 +687,33 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   String get _apiBase =>
       _apiBaseController.text.trim().replaceAll(RegExp(r'/+$'), '');
 
+  String? get _selectedCity {
+    final city = _cityController.text.trim();
+    return _taiwanDistrictOptions.containsKey(city) ? city : null;
+  }
+
+  List<String> get _districtOptions {
+    final city = _selectedCity;
+    if (city == null) return const [];
+    return _taiwanDistrictOptions[city] ?? const [];
+  }
+
+  String? get _selectedDistrict {
+    final district = _districtController.text.trim();
+    return _districtOptions.contains(district) ? district : null;
+  }
+
   @override
   void initState() {
     super.initState();
+    _initializeFirebaseFeatures();
     _bootstrap();
   }
 
   @override
   void dispose() {
     _jobTimer?.cancel();
+    _authSubscription?.cancel();
     _apiBaseController.dispose();
     _cityController.dispose();
     _districtController.dispose();
@@ -335,6 +742,19 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
       _fetchHouses(reset: true),
       _fetchLatestJob(),
     ]);
+  }
+
+  void _changeCity(String? city) {
+    setState(() {
+      _cityController.text = city ?? '';
+      _districtController.clear();
+    });
+  }
+
+  void _changeDistrict(String? district) {
+    setState(() {
+      _districtController.text = district ?? '';
+    });
   }
 
   Future<void> _loadConnectionSettings() async {
@@ -371,6 +791,65 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
   Future<void> _saveFavoriteKeys() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('favoriteHouseKeys', _favoriteKeys.toList());
+  }
+
+  Future<void> _initializeFirebaseFeatures() async {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        ).timeout(const Duration(seconds: 8));
+      }
+
+      _firebaseReady = true;
+      _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
+        _handleAuthChanged,
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      _firebaseReady = false;
+      if (!mounted) return;
+      setState(() => _error = '登入服務暫時不可用，仍可使用本機即時爬蟲。');
+    }
+  }
+
+  Future<void> _handleAuthChanged(User? user) async {
+    if (!mounted) return;
+    setState(() => _currentUser = user);
+
+    if (user == null) return;
+    await _syncFavoritesFromCloud(user);
+  }
+
+  Future<void> _syncFavoritesFromCloud(User user) async {
+    if (!_firebaseReady) return;
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('favorites')
+          .get();
+      final cloudKeys = snapshot.docs
+          .map((doc) => doc.data()['key']?.toString() ?? '')
+          .where((key) => key.isNotEmpty)
+          .toSet();
+      final merged = {..._favoriteKeys, ...cloudKeys};
+
+      for (final key in _favoriteKeys.difference(cloudKeys)) {
+        await _favoriteDocument(user.uid, key).set({
+          'key': key,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      if (!mounted) return;
+      setState(() => _favoriteKeys = merged);
+      await _saveFavoriteKeys();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '收藏同步失敗：$error');
+    }
   }
 
   Future<void> _useWebMode() async {
@@ -616,14 +1095,51 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     final key = house.favoriteKey;
     if (key.isEmpty) return;
 
+    final wasFavorite = _favoriteKeys.contains(key);
     setState(() {
-      if (_favoriteKeys.contains(key)) {
+      if (wasFavorite) {
         _favoriteKeys.remove(key);
       } else {
         _favoriteKeys.add(key);
       }
     });
     await _saveFavoriteKeys();
+
+    final user = _currentUser;
+    if (!_firebaseReady || user == null) return;
+
+    try {
+      final doc = _favoriteDocument(user.uid, key);
+      if (wasFavorite) {
+        await doc.delete();
+      } else {
+        await doc.set({
+          'key': key,
+          'title': house.title,
+          'price': house.price,
+          'source': house.source,
+          'district': house.district,
+          'address': house.address,
+          'link': house.link,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = '收藏同步失敗：$error');
+    }
+  }
+
+  DocumentReference<Map<String, dynamic>> _favoriteDocument(
+    String uid,
+    String key,
+  ) {
+    final id = base64Url.encode(utf8.encode(key)).replaceAll('=', '');
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('favorites')
+        .doc(id);
   }
 
   void _goToPreviousPage() {
@@ -675,6 +1191,23 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
     } finally {
       setState(() => _startingCrawl = false);
     }
+  }
+
+  Future<void> _showAuthDialog() async {
+    if (!_firebaseReady) {
+      setState(() => _error = 'Firebase 尚未初始化，登入與雲端收藏暫時不可用。');
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => const _AuthDialog(),
+    );
+  }
+
+  Future<void> _signOut() async {
+    if (!_firebaseReady) return;
+    await FirebaseAuth.instance.signOut();
   }
 
   void _startPollingIfNeeded() {
@@ -757,6 +1290,12 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         actions: [
+          _AuthActionButton(
+            user: _currentUser,
+            onSignIn: _showAuthDialog,
+            onSignOut: _signOut,
+          ),
+          const SizedBox(width: 12),
           _StatusPill(
             label: _healthText ?? '檢查中',
             color: _healthText == 'API 已連線'
@@ -863,26 +1402,57 @@ class _RentDashboardPageState extends State<RentDashboardPage> {
             Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _cityController,
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('city-${_selectedCity ?? 'all'}'),
+                    initialValue: _selectedCity,
+                    isExpanded: true,
+                    menuMaxHeight: 360,
                     decoration: const InputDecoration(
                       labelText: '縣市',
-                      hintText: '全部',
+                      prefixIcon: Icon(Icons.location_city_outlined),
                     ),
-                    textInputAction: TextInputAction.search,
-                    onSubmitted: (_) => _searchHouses(),
+                    hint: const Text('全部縣市'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('全部縣市')),
+                      ..._taiwanDistrictOptions.keys.map(
+                        (city) =>
+                            DropdownMenuItem(value: city, child: Text(city)),
+                      ),
+                    ],
+                    onChanged: _loadingHouses || _loadingTrends
+                        ? null
+                        : _changeCity,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: TextField(
-                    controller: _districtController,
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey(
+                      'district-${_selectedCity ?? 'all'}-${_selectedDistrict ?? 'all'}',
+                    ),
+                    initialValue: _selectedDistrict,
+                    isExpanded: true,
+                    menuMaxHeight: 360,
                     decoration: const InputDecoration(
                       labelText: '地區',
-                      hintText: '全部',
+                      prefixIcon: Icon(Icons.place_outlined),
                     ),
-                    textInputAction: TextInputAction.search,
-                    onSubmitted: (_) => _searchHouses(),
+                    hint: Text(_selectedCity == null ? '先選縣市' : '全部地區'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('全部地區')),
+                      ..._districtOptions.map(
+                        (district) => DropdownMenuItem(
+                          value: district,
+                          child: Text(district),
+                        ),
+                      ),
+                    ],
+                    onChanged:
+                        _selectedCity == null ||
+                            _loadingHouses ||
+                            _loadingTrends
+                        ? null
+                        : _changeDistrict,
                   ),
                 ),
               ],
@@ -1748,6 +2318,256 @@ class _MetricCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AuthActionButton extends StatelessWidget {
+  const _AuthActionButton({
+    required this.user,
+    required this.onSignIn,
+    required this.onSignOut,
+  });
+
+  final User? user;
+  final VoidCallback onSignIn;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = user;
+
+    if (current == null) {
+      return FilledButton.tonalIcon(
+        onPressed: onSignIn,
+        icon: const Icon(Icons.person_outline),
+        label: const Text('登入'),
+      );
+    }
+
+    return PopupMenuButton<String>(
+      tooltip: '帳號',
+      onSelected: (value) {
+        if (value == 'signOut') onSignOut();
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: 'signOut', child: Text('登出')),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE6F4F1),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.account_circle, color: Color(0xFF0F766E)),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: Text(
+                current.email ?? '已登入',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF0F766E),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthDialog extends StatefulWidget {
+  const _AuthDialog();
+
+  @override
+  State<_AuthDialog> createState() => _AuthDialogState();
+}
+
+class _AuthDialogState extends State<_AuthDialog> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _creatingAccount = false;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+      if (_creatingAccount) {
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } else {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on FirebaseAuthException catch (error) {
+      setState(() => _error = _authErrorMessage(error));
+    } catch (error) {
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    if (_submitting) return;
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      final provider = GoogleAuthProvider()
+        ..addScope('email')
+        ..addScope('profile');
+
+      if (kIsWeb) {
+        await FirebaseAuth.instance.signInWithPopup(provider);
+      } else {
+        await FirebaseAuth.instance.signInWithProvider(provider);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on FirebaseAuthException catch (error) {
+      setState(() => _error = _authErrorMessage(error));
+    } catch (error) {
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  String _authErrorMessage(FirebaseAuthException error) {
+    return switch (error.code) {
+      'email-already-in-use' => '這個 Email 已經註冊過。',
+      'invalid-email' => 'Email 格式不正確。',
+      'weak-password' => '密碼強度不足，請至少使用 6 個字元。',
+      'user-not-found' => '找不到這個帳號。',
+      'wrong-password' => '密碼不正確。',
+      'invalid-credential' => '帳號或密碼不正確。',
+      'operation-not-allowed' => 'Firebase 尚未啟用 Email/Password 登入。',
+      'popup-closed-by-user' => 'Google 登入視窗已關閉。',
+      'popup-blocked' => '瀏覽器阻擋了 Google 登入視窗，請允許彈出視窗後再試一次。',
+      'account-exists-with-different-credential' => '這個 Email 已經用其他登入方式建立帳號。',
+      _ => error.message ?? error.code,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(_creatingAccount ? '建立帳號' : '登入'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _submitting ? null : _signInWithGoogle,
+              icon: const Icon(Icons.g_mobiledata, size: 28),
+              label: const Text('使用 Google 登入'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Expanded(child: Divider()),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    '或使用 Email',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const Expanded(child: Divider()),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                prefixIcon: Icon(Icons.mail_outline),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '密碼',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              _ErrorBox(message: _error!),
+            ],
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _submitting
+                  ? null
+                  : () => setState(() => _creatingAccount = !_creatingAccount),
+              child: Text(_creatingAccount ? '已有帳號，改用登入' : '沒有帳號，建立一個'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton.icon(
+          onPressed: _submitting ? null : _submit,
+          icon: _submitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.login),
+          label: Text(_creatingAccount ? '建立帳號' : '登入'),
+        ),
+      ],
     );
   }
 }
